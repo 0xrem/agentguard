@@ -7,4 +7,10 @@ edition = "2024"
 agentguard-models.workspace = true
 agentguard-policy.workspace = true
 agentguard-store.workspace = true
+axum.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tower.workspace = true

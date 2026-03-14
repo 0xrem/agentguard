@@ -108,6 +108,7 @@ Owns:
 - rule loading
 - audit persistence
 - agent identity and trust state
+- the local service API other components talk to
 
 Should run headlessly and be the only source of truth for decisions.
 

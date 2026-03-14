@@ -9,7 +9,11 @@ dependencies = [
  "agentguard-models",
  "agentguard-policy",
  "agentguard-store",
+ "axum",
+ "serde",
  "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
