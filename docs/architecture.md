@@ -144,10 +144,19 @@ Owns:
 
 This crate should stay storage-focused and avoid absorbing policy logic.
 
+### `agentguard-proxy`
+
+Owns:
+
+- OpenAI-compatible local proxy endpoints
+- prompt and model-response inspection before forwarding output to clients
+- translating proxy traffic into normalized prompt events for the daemon
+
+The first version should support a narrow but real MVP path before expanding to streaming and more providers.
+
 ### Future crates
 
 - `agentguard-platform`: OS-specific observation adapters behind shared traits
-- `agentguard-proxy`: local LLM prompt/response proxy
 - `agentguard-client`: Rust client for talking to the daemon
 
 ### Future applications
@@ -200,6 +209,7 @@ Do not optimize for these yet:
 │   ├── agentguard-daemon/
 │   ├── agentguard-models/
 │   ├── agentguard-policy/
+│   ├── agentguard-proxy/
 │   └── agentguard-store/
 ├── apps/
 │   └── desktop/            # planned
@@ -214,9 +224,8 @@ Do not optimize for these yet:
 2. Build the policy engine with tests for critical behaviors.
 3. Stand up a daemon that can evaluate sample events and emit decisions.
 4. Add a daemon API and local SQLite audit store.
-5. Add a prompt proxy.
-6. Add agent wrappers for Node and Python.
-7. Add the Tauri desktop app.
+5. Add agent wrappers for Node and Python.
+6. Add the Tauri desktop app.
 
 ## Reference Links
 

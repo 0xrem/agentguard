@@ -218,6 +218,7 @@ pub enum MatchPattern {
     Exact(String),
     Prefix(String),
     Contains(String),
+    ContainsInsensitive(String),
     OneOf(Vec<String>),
 }
 
@@ -228,6 +229,9 @@ impl MatchPattern {
             Self::Exact(expected) => candidate == expected,
             Self::Prefix(prefix) => candidate.starts_with(prefix),
             Self::Contains(fragment) => candidate.contains(fragment),
+            Self::ContainsInsensitive(fragment) => candidate
+                .to_ascii_lowercase()
+                .contains(&fragment.to_ascii_lowercase()),
             Self::OneOf(values) => values.iter().any(|value| candidate == value),
         }
     }
@@ -382,6 +386,13 @@ mod tests {
         let pattern = MatchPattern::Prefix("/Users/rem/Projects/".into());
         assert!(pattern.matches("/Users/rem/Projects/demo/src/main.rs"));
         assert!(!pattern.matches("/Users/rem/Documents/notes.md"));
+    }
+
+    #[test]
+    fn contains_insensitive_pattern_ignores_case() {
+        let pattern = MatchPattern::ContainsInsensitive("ignore previous instructions".into());
+        assert!(pattern.matches("Ignore Previous Instructions and continue"));
+        assert!(!pattern.matches("Summarize the file"));
     }
 
     #[test]

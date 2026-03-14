@@ -103,7 +103,7 @@ pub fn default_rules() -> Vec<Rule> {
         )
         .with_priority(850)
         .for_layer(Layer::Prompt)
-        .for_target(MatchPattern::Contains(
+        .for_target(MatchPattern::ContainsInsensitive(
             "ignore previous instructions".into(),
         ))
         .requiring_risk_at_least(RiskLevel::High),
