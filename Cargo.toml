@@ -3,6 +3,7 @@ members = [
     "crates/agentguard-daemon",
     "crates/agentguard-models",
     "crates/agentguard-policy",
+    "crates/agentguard-store",
 ]
 resolver = "3"
 
@@ -12,8 +13,10 @@ license = "Apache-2.0"
 rust-version = "1.94"
 
 [workspace.dependencies]
+agentguard-daemon = { path = "crates/agentguard-daemon" }
 agentguard-models = { path = "crates/agentguard-models" }
 agentguard-policy = { path = "crates/agentguard-policy" }
+agentguard-store = { path = "crates/agentguard-store" }
+rusqlite = { version = "0.38.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-

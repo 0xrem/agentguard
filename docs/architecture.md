@@ -134,11 +134,20 @@ Owns:
 
 This is the contract between every other subsystem.
 
+### `agentguard-store`
+
+Owns:
+
+- SQLite-backed audit persistence
+- schema initialization and migrations
+- loading recent records for the desktop app and CLI tooling
+
+This crate should stay storage-focused and avoid absorbing policy logic.
+
 ### Future crates
 
 - `agentguard-platform`: OS-specific observation adapters behind shared traits
 - `agentguard-proxy`: local LLM prompt/response proxy
-- `agentguard-store`: SQLite-backed persistence for rules and audit logs
 - `agentguard-client`: Rust client for talking to the daemon
 
 ### Future applications
@@ -190,7 +199,8 @@ Do not optimize for these yet:
 ├── crates/
 │   ├── agentguard-daemon/
 │   ├── agentguard-models/
-│   └── agentguard-policy/
+│   ├── agentguard-policy/
+│   └── agentguard-store/
 ├── apps/
 │   └── desktop/            # planned
 └── sdks/
@@ -203,7 +213,7 @@ Do not optimize for these yet:
 1. Lock the shared event and rule model.
 2. Build the policy engine with tests for critical behaviors.
 3. Stand up a daemon that can evaluate sample events and emit decisions.
-4. Add a local SQLite store for rules and audit logs.
+4. Add a daemon API and local SQLite audit store.
 5. Add a prompt proxy.
 6. Add agent wrappers for Node and Python.
 7. Add the Tauri desktop app.
@@ -215,4 +225,3 @@ Do not optimize for these yet:
 - [Apple Endpoint Security `es_new_client`](https://developer.apple.com/documentation/endpointsecurity/es_new_client%28_%3A_%3A%29)
 - [Linux Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html)
 - [Windows file-system filter driver guidance](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/about-file-system-filter-drivers)
-

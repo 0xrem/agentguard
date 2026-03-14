@@ -16,12 +16,33 @@ pub enum RiskLevel {
     Critical,
 }
 
+impl RiskLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Layer {
     Prompt,
     Tool,
     Command,
+}
+
+impl Layer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Tool => "tool",
+            Self::Command => "command",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -31,6 +52,16 @@ pub enum TrustLevel {
     #[default]
     Unknown,
     HighRisk,
+}
+
+impl TrustLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Trusted => "trusted",
+            Self::Unknown => "unknown",
+            Self::HighRisk => "high_risk",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -47,6 +78,22 @@ pub enum Operation {
     ModelResponse,
 }
 
+impl Operation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadFile => "read_file",
+            Self::WriteFile => "write_file",
+            Self::HttpRequest => "http_request",
+            Self::DatabaseQuery => "database_query",
+            Self::BrowserOpen => "browser_open",
+            Self::SendEmail => "send_email",
+            Self::ExecCommand => "exec_command",
+            Self::ModelRequest => "model_request",
+            Self::ModelResponse => "model_response",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum EnforcementAction {
@@ -55,6 +102,18 @@ pub enum EnforcementAction {
     Ask,
     Block,
     Kill,
+}
+
+impl EnforcementAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Warn => "warn",
+            Self::Ask => "ask",
+            Self::Block => "block",
+            Self::Kill => "kill",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -90,6 +149,17 @@ pub enum ResourceTarget {
 }
 
 impl ResourceTarget {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Path(_) => "path",
+            Self::Command(_) => "command",
+            Self::Domain(_) => "domain",
+            Self::Prompt(_) => "prompt",
+            Self::Database(_) => "database",
+            Self::None => "none",
+        }
+    }
+
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::Path(value)
@@ -293,6 +363,14 @@ impl Decision {
             matched_rule_id: Some(rule_id.into()),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AuditRecord {
+    pub id: i64,
+    pub recorded_at_unix_ms: i64,
+    pub event: Event,
+    pub decision: Decision,
 }
 
 #[cfg(test)]
