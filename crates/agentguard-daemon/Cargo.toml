@@ -1,0 +1,9 @@
+[package]
+name = "agentguard-daemon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agentguard-models.workspace = true
+agentguard-policy.workspace = true
+serde_json.workspace = true
