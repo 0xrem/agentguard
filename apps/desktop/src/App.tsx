@@ -1051,14 +1051,6 @@ export default function App() {
                 {resolvingAction === "block" ? "Denying..." : "Deny request"}
               </button>
               <button
-                className="button button-danger"
-                type="button"
-                onClick={() => void handleResolveApproval("kill")}
-                disabled={resolvingAction !== null}
-              >
-                {resolvingAction === "kill" ? "Stopping..." : "Deny and kill"}
-              </button>
-              <button
                 className="button button-primary"
                 type="button"
                 onClick={() => void handleResolveApproval("allow")}

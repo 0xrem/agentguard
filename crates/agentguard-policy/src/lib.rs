@@ -43,6 +43,15 @@ impl PolicyEngine {
 pub fn default_rules() -> Vec<Rule> {
     vec![
         Rule::new(
+            "allow-demo-command",
+            EnforcementAction::Allow,
+            "Demo command for testing AgentGuard integration.",
+        )
+        .with_priority(1_100)
+        .for_layer(Layer::Command)
+        .for_operation(Operation::ExecCommand)
+        .for_target(MatchPattern::Contains("printf 'agentguard-live-demo'".into())),
+        Rule::new(
             "deny-home-wipe",
             EnforcementAction::Block,
             "Destructive command targets the user's home directory.",
