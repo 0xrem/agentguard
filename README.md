@@ -185,6 +185,8 @@ Current end-to-end proof:
 - it verifies both paths: prompt responses stay pending until operator approval, and approved responses are released cleanly afterward
 - `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -v`
 - this verifies the Python SDK follows the same allow, pending-approval, deny, and approval-resolution semantics as the Node wrappers
+- `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_daemon_integration.py' -v`
+- this boots the real Rust daemon binary, drives it through the Python SDK, and resolves approvals through the same daemon API contract the desktop app uses
 
 The most useful contributions right now are:
 
