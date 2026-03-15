@@ -10,7 +10,8 @@ from .client import (
     with_metadata,
 )
 from .errors import AgentGuardHttpError, PendingApprovalError, PolicyDeniedError
-from .openai_agent import run_agent
+from .openai_agent import run_agent as run_openai_chat_agent
+from .responses_agent import run_agent as run_responses_agent
 from .types import (
     AgentIdentity,
     AgentLike,
@@ -38,6 +39,8 @@ from .wrappers import (
     guarded_read_file,
     guarded_write_file,
 )
+
+run_agent = run_openai_chat_agent
 
 __all__ = [
     "DEFAULT_WAIT_FOR_APPROVAL_MS",
@@ -74,6 +77,8 @@ __all__ = [
     "path_target",
     "prompt_target",
     "run_agent",
+    "run_openai_chat_agent",
+    "run_responses_agent",
     "should_deny",
     "with_metadata",
 ]

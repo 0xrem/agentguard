@@ -189,6 +189,8 @@ Current end-to-end proof:
 - this boots the real Rust daemon binary, drives it through the Python SDK, and resolves approvals through the same daemon API contract the desktop app uses
 - `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_openai_agent_proxy_integration.py' -v`
 - this boots the real daemon and proxy binaries, runs a Python OpenAI-compatible agent loop, and proves approvals can unblock live tool execution end to end
+- `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_responses_agent_integration.py' -v`
+- this boots the real daemon binary, runs a Python OpenAI Responses-style tool loop against a `/v1/responses` server, and proves the same desktop approval flow still gates live tool execution
 
 The most useful contributions right now are:
 

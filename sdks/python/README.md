@@ -31,6 +31,19 @@ PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_chat_agent.py \
 
 The model side talks to the proxy. Every real tool action still goes through the local AgentGuard daemon before execution.
 
+## OpenAI Responses / tools example
+
+Run a minimal Responses-style tool runner through the Python SDK:
+
+```bash
+OPENAI_API_KEY=sk-... \
+PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_responses_agent.py \
+  "Upload the prepared payload and confirm when it is done." \
+  --daemon-base-url http://127.0.0.1:8790
+```
+
+This example talks directly to an OpenAI-compatible `/v1/responses` endpoint. Tool execution still goes through the local AgentGuard daemon, so desktop approvals and audit logging work the same way.
+
 ## Run tests
 
 ```bash
@@ -47,4 +60,10 @@ PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 
 
 ```bash
 PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_openai_agent_proxy_integration.py' -v
+```
+
+## Run the real daemon + Responses agent integration check
+
+```bash
+PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_responses_agent_integration.py' -v
 ```
