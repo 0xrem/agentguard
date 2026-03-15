@@ -203,6 +203,22 @@ The most useful contributions right now are:
 - real-world agent integration examples
 - threat research and attack samples
 
+## Desktop Live Path
+
+The desktop app is no longer limited to mock scenarios.
+
+From `apps/desktop`, the control room can now:
+
+- start the local `agentguard-daemon` and `agentguard-proxy` stack for you
+- run a real Python SDK demo agent against that stack
+- surface the same approval request in the native desktop queue
+- remember, edit, disable, and delete local approval-derived rules after a decision
+
+If `OPENAI_API_KEY` is present, the desktop runs the OpenAI-compatible proxy demo path.
+If it is not present, the desktop falls back to `sdks/python/examples/live_demo_agent.py`, which still exercises the real daemon approval flow with a harmless local command.
+
+Recent audit entries and approval dialogs also include richer process context, including PID, executable path, and working directory when the caller can provide them.
+
 ## Why This Project Matters
 
 The next wave of software will not only answer questions. It will act.

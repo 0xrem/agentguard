@@ -101,19 +101,24 @@ export class AgentGuardClient {
 }
 
 export function normalizeAgentIdentity(agent: AgentLike | AgentIdentity | undefined): AgentIdentity {
+  const runtimeAgent = inferRuntimeAgentIdentity();
+
   if (typeof agent === "string") {
-    return namedAgent(agent);
+    return {
+      ...runtimeAgent,
+      name: agent,
+    };
   }
 
   if (!agent) {
-    return namedAgent("unknown-agent");
+    return runtimeAgent;
   }
 
   return {
     name: agent.name,
-    executable_path: agent.executable_path ?? null,
-    process_id: agent.process_id ?? null,
-    parent_process_id: agent.parent_process_id ?? null,
+    executable_path: agent.executable_path ?? runtimeAgent.executable_path,
+    process_id: agent.process_id ?? runtimeAgent.process_id,
+    parent_process_id: agent.parent_process_id ?? runtimeAgent.parent_process_id,
     trust: agent.trust ?? "unknown",
   };
 }
@@ -124,6 +129,24 @@ export function namedAgent(name: string): AgentIdentity {
     executable_path: null,
     process_id: null,
     parent_process_id: null,
+    trust: "unknown",
+  };
+}
+
+export function inferRuntimeAgentIdentity(name?: string): AgentIdentity {
+  const scriptPath = process.argv[1] ?? null;
+  const inferredName =
+    name ??
+    process.env.npm_package_name ??
+    (scriptPath ? scriptPath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") : undefined) ??
+    process.title ??
+    "unknown-agent";
+
+  return {
+    name: inferredName,
+    executable_path: process.execPath ?? null,
+    process_id: process.pid ?? null,
+    parent_process_id: process.ppid ?? null,
     trust: "unknown",
   };
 }

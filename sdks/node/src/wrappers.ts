@@ -70,6 +70,8 @@ export async function guardedReadFile(
     metadata: withMetadata(options.metadata, {
       requested_path: resolvedPath,
       encoding: options.encoding ?? undefined,
+      cwd: process.cwd(),
+      script_path: process.argv[1],
     }),
   });
 
@@ -100,6 +102,8 @@ export async function guardedWriteFile(
         typeof options.encoding === "string" ? options.encoding : undefined,
       byte_length:
         typeof data === "string" ? String(Buffer.byteLength(data)) : String(data.byteLength),
+      cwd: process.cwd(),
+      script_path: process.argv[1],
     }),
   });
 
@@ -131,6 +135,8 @@ export async function guardedFetch(
       method,
       url: request.url,
       network_direction: networkDirection,
+      cwd: process.cwd(),
+      script_path: process.argv[1],
     }),
   });
 
@@ -154,6 +160,7 @@ export async function guardedExecCommand(
     agent: options.agent,
     metadata: withMetadata(options.metadata, {
       cwd: options.cwd ? resolve(options.cwd) : process.cwd(),
+      script_path: process.argv[1],
     }),
   });
 

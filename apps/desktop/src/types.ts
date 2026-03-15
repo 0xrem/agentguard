@@ -63,6 +63,33 @@ export interface PolicyRule {
   reason: string;
 }
 
+export interface ManagedRule {
+  id: string;
+  created_at_unix_ms: number;
+  updated_at_unix_ms: number;
+  enabled: boolean;
+  rule: PolicyRule;
+}
+
+export interface RuntimeStartResult {
+  daemon_started: boolean;
+  proxy_started: boolean;
+  daemon_pid: number | null;
+  proxy_pid: number | null;
+  daemon_url: string;
+  proxy_url: string;
+  message: string;
+}
+
+export interface DemoRunResult {
+  mode: "python_sdk" | "openai_proxy";
+  command: string;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  message: string;
+}
+
 export interface AuditRecord {
   id: number;
   recorded_at_unix_ms: number;
@@ -107,7 +134,7 @@ export interface DashboardSnapshot {
   records: AuditRecord[];
   counts: RiskCounts;
   pending_approvals: ApprovalRequest[];
-  remembered_rules: PolicyRule[];
+  remembered_rules: ManagedRule[];
 }
 
 export type SampleEventKind =

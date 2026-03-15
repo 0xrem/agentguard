@@ -52,6 +52,9 @@ test("client records events and lists audit entries", async () => {
   const recent = await client.listAudit(5);
 
   assert.equal(record.event.agent.name, "Claude Code");
+  assert.equal(record.event.agent.process_id, process.pid);
+  assert.equal(record.event.agent.parent_process_id, process.ppid);
+  assert.equal(record.event.agent.executable_path, process.execPath);
   assert.equal(recent.length, 1);
   assert.equal(recent[0].decision.action, "allow");
 });
@@ -71,6 +74,8 @@ test("guardedReadFile reads when daemon allows", async () => {
   assert.equal(result.value, "safe file");
   assert.equal(daemon.events[0]?.operation, "read_file");
   assert.equal(daemon.events[0]?.target.kind, "path");
+  assert.equal(daemon.events[0]?.metadata.cwd, process.cwd());
+  assert.equal(daemon.events[0]?.metadata.script_path, process.argv[1]);
 });
 
 test("guardedFetch emits an http_request event before forwarding", async () => {

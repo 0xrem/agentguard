@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import subprocess
 import urllib.parse
 import urllib.request
@@ -43,6 +44,8 @@ def guarded_read_file(
                 {
                     "requested_path": resolved_path,
                     "encoding": encoding,
+                    "cwd": str(Path.cwd()),
+                    "script_path": str(Path(sys.argv[0]).expanduser().resolve()),
                 },
             ),
         )
@@ -79,6 +82,8 @@ def guarded_write_file(
                     "requested_path": resolved_path,
                     "encoding": encoding if isinstance(data, str) else None,
                     "byte_length": str(len(data.encode(encoding) if isinstance(data, str) else data)),
+                    "cwd": str(Path.cwd()),
+                    "script_path": str(Path(sys.argv[0]).expanduser().resolve()),
                 },
             ),
         )
@@ -131,6 +136,8 @@ def guarded_fetch(
                     "method": request_method,
                     "url": request.full_url,
                     "network_direction": network_direction,
+                    "cwd": str(Path.cwd()),
+                    "script_path": str(Path(sys.argv[0]).expanduser().resolve()),
                 },
             ),
         )
@@ -163,7 +170,13 @@ def guarded_exec_command(
             risk_hint=risk_hint,
             agent=agent,
             wait_for_approval_ms=wait_for_approval_ms,
-            metadata=with_metadata(metadata, {"cwd": resolved_cwd}),
+            metadata=with_metadata(
+                metadata,
+                {
+                    "cwd": resolved_cwd,
+                    "script_path": str(Path(sys.argv[0]).expanduser().resolve()),
+                },
+            ),
         )
     )
 

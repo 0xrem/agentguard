@@ -8,7 +8,8 @@ use std::{
 
 use agentguard_models::{
     ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction,
-    EvaluateEventRequest, EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest, Rule,
+    EvaluateEventRequest, EvaluationOutcome, EvaluationStatus, Event, ManagedRule,
+    ResolveApprovalRequest, Rule,
 };
 use agentguard_policy::{PolicyEngine, default_rules};
 use agentguard_store::{AuditStore, StoreError};
@@ -111,12 +112,22 @@ impl AgentGuardDaemon {
             .map_err(Into::into)
     }
 
-    pub fn list_rules(&self) -> Result<Vec<Rule>> {
+    pub fn list_rules(&self) -> Result<Vec<ManagedRule>> {
         self.store.list_rules().map_err(Into::into)
     }
 
-    pub fn save_rule(&self, rule: Rule) -> Result<Rule> {
+    pub fn save_rule(&self, rule: Rule) -> Result<ManagedRule> {
         self.store.save_rule(&rule).map_err(Into::into)
+    }
+
+    pub fn set_rule_enabled(&self, rule_id: &str, enabled: bool) -> Result<Option<ManagedRule>> {
+        self.store
+            .set_rule_enabled(rule_id, enabled)
+            .map_err(Into::into)
+    }
+
+    pub fn delete_rule(&self, rule_id: &str) -> Result<bool> {
+        self.store.delete_rule(rule_id).map_err(Into::into)
     }
 
     pub fn resolve_approval_request(
@@ -172,7 +183,7 @@ impl AgentGuardDaemon {
     }
 
     fn active_policy(&self) -> Result<PolicyEngine> {
-        let custom_rules = self.store.list_rules()?;
+        let custom_rules = self.store.enabled_rules()?;
         Ok(PolicyEngine::new(
             custom_rules
                 .into_iter()
@@ -351,6 +362,9 @@ pub fn app(daemon: AgentGuardDaemon) -> Router {
         .route("/v1/audit", get(list_audit_records))
         .route("/v1/approvals", get(list_approval_requests))
         .route("/v1/rules", get(list_rules).post(create_rule))
+        .route("/v1/rules/{rule_id}/enable", post(enable_rule))
+        .route("/v1/rules/{rule_id}/disable", post(disable_rule))
+        .route("/v1/rules/{rule_id}", axum::routing::delete(delete_rule))
         .route(
             "/v1/approvals/{approval_id}/resolve",
             post(resolve_approval_request),
@@ -457,7 +471,7 @@ async fn list_approval_requests(
 async fn list_rules(
     State(state): State<ApiState>,
     Query(query): Query<RuleListQuery>,
-) -> std::result::Result<Json<Vec<Rule>>, DaemonApiError> {
+) -> std::result::Result<Json<Vec<ManagedRule>>, DaemonApiError> {
     let limit = query.limit.unwrap_or(250).min(500);
     let rules = state.daemon.lock().map_err(lock_error)?.list_rules()?;
     Ok(Json(rules.into_iter().take(limit).collect()))
@@ -466,9 +480,58 @@ async fn list_rules(
 async fn create_rule(
     State(state): State<ApiState>,
     Json(rule): Json<Rule>,
-) -> std::result::Result<Json<Rule>, DaemonApiError> {
+) -> std::result::Result<Json<ManagedRule>, DaemonApiError> {
     let rule = state.daemon.lock().map_err(lock_error)?.save_rule(rule)?;
     Ok(Json(rule))
+}
+
+async fn enable_rule(
+    State(state): State<ApiState>,
+    Path(rule_id): Path<String>,
+) -> std::result::Result<Json<ManagedRule>, DaemonApiError> {
+    let rule = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .set_rule_enabled(&rule_id, true)?
+        .ok_or_else(|| {
+            DaemonApiError::NotFound(format!("policy rule `{rule_id}` was not found"))
+        })?;
+    Ok(Json(rule))
+}
+
+async fn disable_rule(
+    State(state): State<ApiState>,
+    Path(rule_id): Path<String>,
+) -> std::result::Result<Json<ManagedRule>, DaemonApiError> {
+    let rule = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .set_rule_enabled(&rule_id, false)?
+        .ok_or_else(|| {
+            DaemonApiError::NotFound(format!("policy rule `{rule_id}` was not found"))
+        })?;
+    Ok(Json(rule))
+}
+
+async fn delete_rule(
+    State(state): State<ApiState>,
+    Path(rule_id): Path<String>,
+) -> std::result::Result<StatusCode, DaemonApiError> {
+    let deleted = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .delete_rule(&rule_id)?;
+
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(DaemonApiError::NotFound(format!(
+            "policy rule `{rule_id}` was not found"
+        )))
+    }
 }
 
 async fn resolve_approval_request(
@@ -552,7 +615,7 @@ mod tests {
 
     use agentguard_models::{
         AgentIdentity, EnforcementAction, EvaluateEventRequest, EvaluationStatus, Layer,
-        MatchPattern, Operation, ResourceTarget, Rule,
+        ManagedRule, MatchPattern, Operation, ResourceTarget, Rule,
     };
     use agentguard_store::AuditStore;
 
@@ -833,8 +896,77 @@ mod tests {
         let rules_body = to_bytes(rules_response.into_body(), usize::MAX)
             .await
             .expect("response body should read");
-        let rules: Vec<Rule> = serde_json::from_slice(&rules_body).expect("rules should decode");
-        assert_eq!(rules, vec![rule]);
+        let rules: Vec<ManagedRule> =
+            serde_json::from_slice(&rules_body).expect("rules should decode");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule, rule);
+        assert!(rules[0].enabled);
+    }
+
+    #[tokio::test]
+    async fn api_disables_and_deletes_custom_rules() {
+        let daemon = AgentGuardDaemon::with_mvp_defaults(
+            AuditStore::open_in_memory().expect("store should initialize"),
+        );
+        let app = app(daemon);
+        let rule = Rule::new(
+            "remembered-cli-command",
+            EnforcementAction::Allow,
+            "Remembered operator approval for the local CLI demo.",
+        )
+        .with_priority(875)
+        .for_layer(Layer::Command)
+        .for_operation(Operation::ExecCommand)
+        .for_agent(MatchPattern::Exact("demo-agent".into()))
+        .for_target(MatchPattern::Exact("printf 'agentguard-live-demo'".into()));
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/rules")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&rule).expect("rule should serialize"),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(create_response.status(), StatusCode::OK);
+
+        let disable_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/rules/remembered-cli-command/disable")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(disable_response.status(), StatusCode::OK);
+
+        let disable_body = to_bytes(disable_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let disabled_rule: ManagedRule =
+            serde_json::from_slice(&disable_body).expect("rule should decode");
+        assert!(!disabled_rule.enabled);
+
+        let delete_response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/v1/rules/remembered-cli-command")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
     }
 
     fn upload_event() -> Event {

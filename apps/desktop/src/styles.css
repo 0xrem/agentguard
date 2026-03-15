@@ -404,6 +404,63 @@ textarea {
   background: rgba(255, 255, 255, 0.74);
 }
 
+.live-demo-panel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(24, 35, 50, 0.08);
+}
+
+.live-demo-actions,
+.rule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.button-inline {
+  padding: 10px 14px;
+}
+
+.live-demo-status,
+.demo-result,
+.rule-editor {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.live-demo-status strong,
+.demo-result strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.live-demo-status span {
+  display: block;
+  color: #506175;
+  line-height: 1.5;
+}
+
+.demo-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.demo-result pre {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(24, 35, 50, 0.06);
+  color: #1f2d3d;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .decision-chip,
 .risk-chip {
   display: inline-flex;
@@ -573,6 +630,11 @@ textarea {
   background: rgba(255, 255, 255, 0.74);
 }
 
+.remembered-rule-card.disabled {
+  opacity: 0.72;
+  background: rgba(233, 235, 238, 0.72);
+}
+
 .remembered-rule-header {
   display: flex;
   align-items: center;
@@ -610,6 +672,41 @@ textarea {
   margin: 6px 0 0;
   color: #1f2d3d;
   overflow-wrap: anywhere;
+}
+
+.rule-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.rule-editor-field {
+  display: grid;
+  gap: 8px;
+}
+
+.rule-editor-field span {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #8d9aab;
+}
+
+.rule-editor-field input,
+.rule-editor-field select,
+.rule-editor-field textarea {
+  width: 100%;
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #1f2d3d;
+}
+
+.rule-editor-field textarea {
+  min-height: 96px;
+  resize: vertical;
 }
 
 .empty-state {
@@ -808,6 +905,11 @@ textarea {
 
   .risk-grid,
   .action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-result-grid,
+  .rule-editor-grid {
     grid-template-columns: 1fr;
   }
 

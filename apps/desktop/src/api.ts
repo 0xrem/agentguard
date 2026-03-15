@@ -1,16 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  mockDeletePolicyRule,
   mockDashboard,
   mockResolveApprovalRequest,
   mockSavePolicyRule,
+  mockSetPolicyRuleEnabled,
+  mockStartLocalStack,
+  mockRunRealAgentDemo,
   mockSubmitSampleEvent,
 } from "./mock";
 import type {
   ApprovalRequest,
   AuditRecord,
   DashboardSnapshot,
+  DemoRunResult,
   EnforcementAction,
+  ManagedRule,
   PolicyRule,
+  RuntimeStartResult,
   SampleEventKind,
 } from "./types";
 
@@ -46,12 +53,47 @@ export async function resolveApprovalRequest(
   });
 }
 
-export async function savePolicyRule(rule: PolicyRule): Promise<PolicyRule> {
+export async function savePolicyRule(rule: PolicyRule): Promise<ManagedRule> {
   if (!isTauriRuntime()) {
     return mockSavePolicyRule(rule);
   }
 
-  return invoke<PolicyRule>("save_policy_rule", { rule });
+  return invoke<ManagedRule>("save_policy_rule", { rule });
+}
+
+export async function setPolicyRuleEnabled(
+  ruleId: string,
+  enabled: boolean,
+): Promise<ManagedRule> {
+  if (!isTauriRuntime()) {
+    return mockSetPolicyRuleEnabled(ruleId, enabled);
+  }
+
+  return invoke<ManagedRule>("set_policy_rule_enabled", { ruleId, enabled });
+}
+
+export async function deletePolicyRule(ruleId: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return mockDeletePolicyRule(ruleId);
+  }
+
+  await invoke("delete_policy_rule", { ruleId });
+}
+
+export async function startLocalStack(): Promise<RuntimeStartResult> {
+  if (!isTauriRuntime()) {
+    return mockStartLocalStack();
+  }
+
+  return invoke<RuntimeStartResult>("start_local_stack");
+}
+
+export async function runRealAgentDemo(): Promise<DemoRunResult> {
+  if (!isTauriRuntime()) {
+    return mockRunRealAgentDemo();
+  }
+
+  return invoke<DemoRunResult>("run_real_agent_demo");
 }
 
 function isTauriRuntime(): boolean {

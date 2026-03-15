@@ -2,6 +2,7 @@ export {
   AgentGuardClient,
   commandTarget,
   domainTarget,
+  inferRuntimeAgentIdentity,
   namedAgent,
   normalizeAgentIdentity,
   pathTarget,

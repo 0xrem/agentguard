@@ -31,6 +31,19 @@ PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_chat_agent.py \
 
 The model side talks to the proxy. Every real tool action still goes through the local AgentGuard daemon before execution.
 
+## Live local approval demo
+
+Run a harmless local command through the real daemon approval loop:
+
+```bash
+PYTHONPATH=sdks/python/src python3 sdks/python/examples/live_demo_agent.py \
+  --daemon-base-url http://127.0.0.1:8790 \
+  --wait-for-approval-ms 30000
+```
+
+This is the same fallback path the desktop app can launch from its "Run real agent demo" action when no `OPENAI_API_KEY` is available.
+The SDK also forwards runtime process context such as PID, executable path, working directory, and script path when it can infer them, so desktop approvals and audit records have more than just a wrapper-level agent name.
+
 ## OpenAI Responses / tools example
 
 Run a minimal Responses-style tool runner through the Python SDK:

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .errors import AgentGuardHttpError, PendingApprovalError, PolicyDeniedError
@@ -160,26 +162,59 @@ class AgentGuardClient:
 
 
 def normalize_agent_identity(agent: Optional[AgentLike]) -> AgentIdentity:
+    runtime = infer_runtime_agent_identity()
+
     if isinstance(agent, AgentIdentity):
-        return agent
+        return AgentIdentity(
+            name=agent.name,
+            executable_path=agent.executable_path or runtime.executable_path,
+            process_id=agent.process_id or runtime.process_id,
+            parent_process_id=agent.parent_process_id or runtime.parent_process_id,
+            trust=agent.trust,
+        )
 
     if isinstance(agent, str):
-        return named_agent(agent)
+        return AgentIdentity(
+            name=agent,
+            executable_path=runtime.executable_path,
+            process_id=runtime.process_id,
+            parent_process_id=runtime.parent_process_id,
+            trust="unknown",
+        )
 
     if not agent:
-        return named_agent("unknown-agent")
+        return runtime
 
     return AgentIdentity(
         name=agent["name"],
-        executable_path=agent.get("executable_path"),
-        process_id=agent.get("process_id"),
-        parent_process_id=agent.get("parent_process_id"),
+        executable_path=agent.get("executable_path") or runtime.executable_path,
+        process_id=agent.get("process_id") or runtime.process_id,
+        parent_process_id=agent.get("parent_process_id") or runtime.parent_process_id,
         trust=agent.get("trust", "unknown"),
     )
 
 
 def named_agent(name: str) -> AgentIdentity:
     return AgentIdentity(name=name)
+
+
+def infer_runtime_agent_identity(name: Optional[str] = None) -> AgentIdentity:
+    script_path = Path(sys.argv[0]).expanduser()
+    inferred_name = (
+        name
+        or (script_path.stem if script_path.name else None)
+        or Path(sys.executable).name
+        or "unknown-agent"
+    )
+    executable_path = sys.executable or None
+
+    return AgentIdentity(
+        name=inferred_name,
+        executable_path=executable_path,
+        process_id=os.getpid(),
+        parent_process_id=os.getppid(),
+        trust="unknown",
+    )
 
 
 def path_target(value: str) -> ResourceTarget:
@@ -244,6 +279,7 @@ __all__ = [
     "AgentGuardClient",
     "command_target",
     "domain_target",
+    "infer_runtime_agent_identity",
     "named_agent",
     "normalize_agent_identity",
     "path_target",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import tempfile
 import threading
 import time
@@ -55,6 +57,9 @@ class AgentGuardPythonSdkTests(unittest.TestCase):
         recent = self.client.list_audit(5)
 
         self.assertEqual(record.event.agent.name, "Python Agent")
+        self.assertEqual(record.event.agent.process_id, os.getpid())
+        self.assertEqual(record.event.agent.parent_process_id, os.getppid())
+        self.assertEqual(record.event.agent.executable_path, sys.executable)
         self.assertEqual(len(recent), 1)
         self.assertEqual(recent[0].decision.action, "allow")
 
@@ -68,6 +73,11 @@ class AgentGuardPythonSdkTests(unittest.TestCase):
         self.assertEqual(result.value, "safe file")
         self.assertEqual(self.daemon.state.events[0]["operation"], "read_file")
         self.assertEqual(self.daemon.state.events[0]["target"]["kind"], "path")
+        self.assertEqual(self.daemon.state.events[0]["metadata"]["cwd"], str(Path.cwd()))
+        self.assertEqual(
+            self.daemon.state.events[0]["metadata"]["script_path"],
+            str(Path(sys.argv[0]).expanduser().resolve()),
+        )
 
     def test_guarded_fetch_emits_http_request_event_before_forwarding(self) -> None:
         upstream = MockServer(make_text_handler)

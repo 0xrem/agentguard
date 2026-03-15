@@ -3,8 +3,11 @@ import type {
   ApprovalStatus,
   AuditRecord,
   DashboardSnapshot,
+  DemoRunResult,
   EnforcementAction,
+  ManagedRule,
   PolicyRule,
+  RuntimeStartResult,
   SampleEventKind,
 } from "./types";
 
@@ -102,8 +105,8 @@ const previewRecords: AuditRecord[] = [
 ];
 
 const previewPendingApprovals: ApprovalRequest[] = [];
-const previewRememberedRules: PolicyRule[] = [
-  {
+const previewRememberedRules: ManagedRule[] = [
+  createManagedRule({
     id: "remembered-preview-review-upload",
     priority: 875,
     layer: "tool",
@@ -119,7 +122,7 @@ const previewRememberedRules: PolicyRule[] = [
     minimum_risk: "high",
     action: "allow",
     reason: "Remembered operator approval for the internal review upload service.",
-  },
+  }),
 ];
 
 export function mockDashboard(limit = 25): DashboardSnapshot {
@@ -201,15 +204,73 @@ export function mockResolveApprovalRequest(
   return { ...approval };
 }
 
-export function mockSavePolicyRule(rule: PolicyRule): PolicyRule {
+export function mockSavePolicyRule(rule: PolicyRule): ManagedRule {
+  const managedRule = createManagedRule(rule);
   const existingIndex = previewRememberedRules.findIndex((item) => item.id === rule.id);
   if (existingIndex >= 0) {
-    previewRememberedRules[existingIndex] = rule;
+    managedRule.created_at_unix_ms = previewRememberedRules[existingIndex].created_at_unix_ms;
+    managedRule.enabled = previewRememberedRules[existingIndex].enabled;
+    previewRememberedRules[existingIndex] = managedRule;
   } else {
-    previewRememberedRules.unshift(rule);
+    previewRememberedRules.unshift(managedRule);
   }
 
-  return rule;
+  return managedRule;
+}
+
+export function mockSetPolicyRuleEnabled(ruleId: string, enabled: boolean): ManagedRule {
+  const rule = previewRememberedRules.find((item) => item.id === ruleId);
+  if (!rule) {
+    throw new Error(`Mock rule ${ruleId} was not found.`);
+  }
+
+  rule.enabled = enabled;
+  rule.updated_at_unix_ms = Date.now();
+  return { ...rule, rule: { ...rule.rule } };
+}
+
+export function mockDeletePolicyRule(ruleId: string): void {
+  const index = previewRememberedRules.findIndex((item) => item.id === ruleId);
+  if (index < 0) {
+    throw new Error(`Mock rule ${ruleId} was not found.`);
+  }
+
+  previewRememberedRules.splice(index, 1);
+}
+
+export function mockStartLocalStack(): RuntimeStartResult {
+  return {
+    daemon_started: true,
+    proxy_started: true,
+    daemon_pid: 4301,
+    proxy_pid: 4302,
+    daemon_url: "http://127.0.0.1:8790",
+    proxy_url: "http://127.0.0.1:8787",
+    message: "Preview mode started the local daemon and proxy placeholders.",
+  };
+}
+
+export function mockRunRealAgentDemo(): DemoRunResult {
+  return {
+    mode: "python_sdk",
+    command:
+      "PYTHONPATH=sdks/python/src python3 sdks/python/examples/live_demo_agent.py --daemon-base-url http://127.0.0.1:8790",
+    exit_code: 0,
+    stdout: "agentguard-live-demo\n",
+    stderr: "",
+    message: "Preview mode ran the Python SDK live demo placeholder.",
+  };
+}
+
+function createManagedRule(rule: PolicyRule): ManagedRule {
+  const now = Date.now();
+  return {
+    id: rule.id,
+    created_at_unix_ms: now,
+    updated_at_unix_ms: now,
+    enabled: true,
+    rule,
+  };
 }
 
 function sampleRecord(kind: SampleEventKind, timestamp: number): AuditRecord {

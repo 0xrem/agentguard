@@ -360,6 +360,15 @@ impl Rule {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ManagedRule {
+    pub id: String,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub enabled: bool,
+    pub rule: Rule,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Decision {
     pub action: EnforcementAction,
     pub risk: RiskLevel,

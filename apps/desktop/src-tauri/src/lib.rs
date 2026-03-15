@@ -1,17 +1,64 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use agentguard_models::{
-    ApprovalRequest, AuditRecord, EnforcementAction, Event, ResolveApprovalRequest, Rule,
+    ApprovalRequest, AuditRecord, EnforcementAction, Event, ManagedRule, ResolveApprovalRequest,
+    Rule,
 };
 use reqwest::Client;
 use serde::Serialize;
 
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8790";
+const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:8787";
+const STACK_START_TIMEOUT_MS: u64 = 10_000;
 
 #[derive(Clone)]
 struct DesktopState {
     client: Client,
     daemon_url: String,
+    proxy_url: String,
+    workspace_root: PathBuf,
+    runtime: Arc<Mutex<RuntimeSupervisor>>,
+}
+
+#[derive(Default)]
+struct RuntimeSupervisor {
+    daemon: Option<RuntimeProcess>,
+    proxy: Option<RuntimeProcess>,
+}
+
+struct RuntimeProcess {
+    child: Child,
+    _log_path: PathBuf,
+    _command: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct RuntimeStartResult {
+    daemon_started: bool,
+    proxy_started: bool,
+    daemon_pid: Option<u32>,
+    proxy_pid: Option<u32>,
+    daemon_url: String,
+    proxy_url: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DemoRunResult {
+    mode: String,
+    command: String,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,7 +91,7 @@ struct DashboardSnapshot {
     records: Vec<AuditRecord>,
     counts: RiskCounts,
     pending_approvals: Vec<ApprovalRequest>,
-    remembered_rules: Vec<Rule>,
+    remembered_rules: Vec<ManagedRule>,
 }
 
 #[derive(Clone, Copy)]
@@ -147,8 +194,39 @@ async fn resolve_approval_request(
 async fn save_policy_rule(
     state: tauri::State<'_, DesktopState>,
     rule: Rule,
-) -> Result<Rule, String> {
+) -> Result<ManagedRule, String> {
     post_policy_rule(&state, &rule).await
+}
+
+#[tauri::command]
+async fn set_policy_rule_enabled(
+    state: tauri::State<'_, DesktopState>,
+    rule_id: String,
+    enabled: bool,
+) -> Result<ManagedRule, String> {
+    post_policy_rule_enabled(&state, &rule_id, enabled).await
+}
+
+#[tauri::command]
+async fn delete_policy_rule(
+    state: tauri::State<'_, DesktopState>,
+    rule_id: String,
+) -> Result<(), String> {
+    delete_policy_rule_request(&state, &rule_id).await
+}
+
+#[tauri::command]
+async fn start_local_stack(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<RuntimeStartResult, String> {
+    start_runtime_stack(&state).await
+}
+
+#[tauri::command]
+async fn run_real_agent_demo(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<DemoRunResult, String> {
+    run_live_demo(&state).await
 }
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
@@ -233,7 +311,10 @@ async fn fetch_pending_approvals(
         .map_err(|error| format!("failed to decode approval queue: {error}"))
 }
 
-async fn fetch_policy_rules(state: &DesktopState, limit: usize) -> Result<Vec<Rule>, String> {
+async fn fetch_policy_rules(
+    state: &DesktopState,
+    limit: usize,
+) -> Result<Vec<ManagedRule>, String> {
     let url = format!("{}/v1/rules?limit={limit}", state.daemon_url);
     let response = state
         .client
@@ -250,7 +331,7 @@ async fn fetch_policy_rules(state: &DesktopState, limit: usize) -> Result<Vec<Ru
     }
 
     response
-        .json::<Vec<Rule>>()
+        .json::<Vec<ManagedRule>>()
         .await
         .map_err(|error| format!("failed to decode remembered rules: {error}"))
 }
@@ -313,7 +394,7 @@ async fn post_approval_resolution(
         .map_err(|error| format!("failed to decode approval resolution response: {error}"))
 }
 
-async fn post_policy_rule(state: &DesktopState, rule: &Rule) -> Result<Rule, String> {
+async fn post_policy_rule(state: &DesktopState, rule: &Rule) -> Result<ManagedRule, String> {
     let url = format!("{}/v1/rules", state.daemon_url);
     let response = state
         .client
@@ -335,9 +416,385 @@ async fn post_policy_rule(state: &DesktopState, rule: &Rule) -> Result<Rule, Str
     }
 
     response
-        .json::<Rule>()
+        .json::<ManagedRule>()
         .await
         .map_err(|error| format!("failed to decode policy rule response: {error}"))
+}
+
+async fn post_policy_rule_enabled(
+    state: &DesktopState,
+    rule_id: &str,
+    enabled: bool,
+) -> Result<ManagedRule, String> {
+    let action = if enabled { "enable" } else { "disable" };
+    let url = format!("{}/v1/rules/{rule_id}/{action}", state.daemon_url);
+    let response = state
+        .client
+        .post(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to update policy rule state: {error}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unable to decode daemon error body".into());
+        return Err(format!(
+            "daemon rejected the policy rule state change with {status}: {body}"
+        ));
+    }
+
+    response
+        .json::<ManagedRule>()
+        .await
+        .map_err(|error| format!("failed to decode policy rule state response: {error}"))
+}
+
+async fn delete_policy_rule_request(state: &DesktopState, rule_id: &str) -> Result<(), String> {
+    let url = format!("{}/v1/rules/{rule_id}", state.daemon_url);
+    let response = state
+        .client
+        .delete(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to delete policy rule: {error}"))?;
+
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "unable to decode daemon error body".into());
+    Err(format!(
+        "daemon rejected the policy rule deletion with {status}: {body}"
+    ))
+}
+
+async fn start_runtime_stack(state: &DesktopState) -> Result<RuntimeStartResult, String> {
+    let daemon_started = if daemon_is_healthy(state).await {
+        false
+    } else {
+        spawn_runtime_process_if_needed(state, RuntimeService::Daemon)?
+    };
+
+    wait_for_health(&state.client, &state.daemon_url, STACK_START_TIMEOUT_MS).await?;
+
+    let proxy_started = if proxy_is_healthy(state).await {
+        false
+    } else {
+        spawn_runtime_process_if_needed(state, RuntimeService::Proxy)?
+    };
+
+    wait_for_health(&state.client, &state.proxy_url, STACK_START_TIMEOUT_MS).await?;
+
+    let (daemon_pid, proxy_pid) = {
+        let mut runtime = state
+            .runtime
+            .lock()
+            .map_err(|_| "desktop runtime lock poisoned".to_string())?;
+        (
+            runtime_process_pid(runtime.daemon.as_mut()),
+            runtime_process_pid(runtime.proxy.as_mut()),
+        )
+    };
+
+    Ok(RuntimeStartResult {
+        daemon_started,
+        proxy_started,
+        daemon_pid,
+        proxy_pid,
+        daemon_url: state.daemon_url.clone(),
+        proxy_url: state.proxy_url.clone(),
+        message: "AgentGuard local stack is ready for real SDK and proxy demos.".into(),
+    })
+}
+
+async fn run_live_demo(state: &DesktopState) -> Result<DemoRunResult, String> {
+    let stack = start_runtime_stack(state).await?;
+    let py_path = state.workspace_root.join("sdks/python/src");
+
+    let (mode, mut command, command_line) = if openai_demo_available() {
+        let script = state
+            .workspace_root
+            .join("sdks/python/examples/openai_chat_agent.py");
+        let task = "Read the repository README, then run a harmless local shell command and report when it succeeds.";
+        let mut command = Command::new("python3");
+        command
+            .current_dir(&state.workspace_root)
+            .env("PYTHONPATH", py_path.as_os_str())
+            .arg(script.as_os_str())
+            .arg(task)
+            .arg("--proxy-base-url")
+            .arg(&state.proxy_url)
+            .arg("--daemon-base-url")
+            .arg(&state.daemon_url)
+            .arg("--wait-for-approval-ms")
+            .arg("30000");
+
+        (
+            "openai_proxy",
+            command,
+            format!(
+                "PYTHONPATH={} python3 sdks/python/examples/openai_chat_agent.py ... --proxy-base-url {} --daemon-base-url {}",
+                py_path.display(),
+                state.proxy_url,
+                state.daemon_url
+            ),
+        )
+    } else {
+        let script = state
+            .workspace_root
+            .join("sdks/python/examples/live_demo_agent.py");
+        let mut command = Command::new("python3");
+        command
+            .current_dir(&state.workspace_root)
+            .env("PYTHONPATH", py_path.as_os_str())
+            .arg(script.as_os_str())
+            .arg("--daemon-base-url")
+            .arg(&state.daemon_url)
+            .arg("--wait-for-approval-ms")
+            .arg("30000");
+
+        (
+            "python_sdk",
+            command,
+            format!(
+                "PYTHONPATH={} python3 sdks/python/examples/live_demo_agent.py --daemon-base-url {} --wait-for-approval-ms 30000",
+                py_path.display(),
+                state.daemon_url
+            ),
+        )
+    };
+
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to run real integration demo: {error}"))?;
+    let exit_code = output.status.code();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    Ok(DemoRunResult {
+        mode: mode.into(),
+        command: command_line,
+        exit_code,
+        stdout,
+        stderr,
+        message: format!("{} Demo mode `{mode}` finished.", stack.message),
+    })
+}
+
+fn spawn_runtime_process_if_needed(
+    state: &DesktopState,
+    service: RuntimeService,
+) -> Result<bool, String> {
+    let mut runtime = state
+        .runtime
+        .lock()
+        .map_err(|_| "desktop runtime lock poisoned".to_string())?;
+    let slot = match service {
+        RuntimeService::Daemon => &mut runtime.daemon,
+        RuntimeService::Proxy => &mut runtime.proxy,
+    };
+
+    if let Some(process) = slot.as_mut()
+        && runtime_process_pid(Some(process)).is_some()
+    {
+        return Ok(false);
+    }
+
+    *slot = Some(spawn_runtime_process(
+        &state.workspace_root,
+        &state.daemon_url,
+        &state.proxy_url,
+        service,
+    )?);
+    Ok(true)
+}
+
+fn spawn_runtime_process(
+    workspace_root: &Path,
+    daemon_url: &str,
+    proxy_url: &str,
+    service: RuntimeService,
+) -> Result<RuntimeProcess, String> {
+    let log_path = runtime_log_path(service.label());
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to prepare runtime log directory: {error}"))?;
+    }
+
+    let stdout = File::create(&log_path)
+        .map_err(|error| format!("failed to create runtime log file: {error}"))?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|error| format!("failed to clone runtime log file handle: {error}"))?;
+
+    let (program, args) = runtime_program(workspace_root, service);
+    let mut command = Command::new(&program);
+    command
+        .args(&args)
+        .current_dir(workspace_root)
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+
+    command.env(
+        "AGENTGUARD_DB_PATH",
+        workspace_root.join("agentguard-dev.db"),
+    );
+    command.env("AGENTGUARD_DAEMON_BIND", bind_addr_from_url(daemon_url)?);
+
+    if matches!(service, RuntimeService::Proxy) {
+        command.env("AGENTGUARD_PROXY_BIND", bind_addr_from_url(proxy_url)?);
+
+        if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
+            command.env("AGENTGUARD_UPSTREAM_API_KEY", api_key);
+        }
+
+        if let Ok(base_url) = std::env::var("OPENAI_BASE_URL") {
+            command.env(
+                "AGENTGUARD_UPSTREAM_BASE_URL",
+                normalize_upstream_base_url(&base_url),
+            );
+        }
+    }
+
+    let child = command
+        .spawn()
+        .map_err(|error| format!("failed to launch {}: {error}", service.label()))?;
+    let command_line = format!("{} {}", display_program(&program), args.join(" "))
+        .trim()
+        .to_string();
+
+    Ok(RuntimeProcess {
+        child,
+        _log_path: log_path,
+        _command: command_line,
+    })
+}
+
+fn runtime_program(workspace_root: &Path, service: RuntimeService) -> (PathBuf, Vec<String>) {
+    let binary = workspace_root
+        .join("target/debug")
+        .join(service.binary_name());
+    if binary.exists() {
+        return (binary, Vec::new());
+    }
+
+    (
+        PathBuf::from("cargo"),
+        vec!["run".into(), "-p".into(), service.package_name().into()],
+    )
+}
+
+fn runtime_log_path(label: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("agentguard-runtime")
+        .join(format!("{label}.log"))
+}
+
+fn runtime_process_pid(process: Option<&mut RuntimeProcess>) -> Option<u32> {
+    let process = process?;
+    match process.child.try_wait() {
+        Ok(None) => Some(process.child.id()),
+        Ok(Some(_)) | Err(_) => None,
+    }
+}
+
+async fn wait_for_health(client: &Client, url: &str, timeout_ms: u64) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if healthz_is_success(client, url).await {
+            return Ok(());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("timed out waiting for {url} to become healthy"));
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+async fn daemon_is_healthy(state: &DesktopState) -> bool {
+    healthz_is_success(&state.client, &state.daemon_url).await
+}
+
+async fn proxy_is_healthy(state: &DesktopState) -> bool {
+    healthz_is_success(&state.client, &state.proxy_url).await
+}
+
+async fn healthz_is_success(client: &Client, base_url: &str) -> bool {
+    client
+        .get(format!("{base_url}/healthz"))
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+fn bind_addr_from_url(url: &str) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|error| format!("invalid runtime url `{url}`: {error}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("runtime url `{url}` is missing a host"))?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| format!("runtime url `{url}` is missing a port"))?;
+
+    Ok(format!("{host}:{port}"))
+}
+
+fn normalize_upstream_base_url(value: &str) -> String {
+    value
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
+}
+
+fn openai_demo_available() -> bool {
+    std::env::var("OPENAI_API_KEY").is_ok()
+}
+
+fn display_program(program: &Path) -> String {
+    program
+        .to_str()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| program.display().to_string())
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeService {
+    Daemon,
+    Proxy,
+}
+
+impl RuntimeService {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Daemon => "daemon",
+            Self::Proxy => "proxy",
+        }
+    }
+
+    fn binary_name(self) -> &'static str {
+        match self {
+            Self::Daemon => "agentguard-daemon",
+            Self::Proxy => "agentguard-proxy",
+        }
+    }
+
+    fn package_name(self) -> &'static str {
+        match self {
+            Self::Daemon => "agentguard-daemon",
+            Self::Proxy => "agentguard-proxy",
+        }
+    }
 }
 
 fn summarize_counts(records: &[AuditRecord]) -> RiskCounts {
@@ -485,6 +942,14 @@ fn now_unix_ms() -> i64 {
         .as_millis() as i64
 }
 
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("workspace root should exist")
+        .to_path_buf()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -492,12 +957,20 @@ pub fn run() {
             client: Client::new(),
             daemon_url: std::env::var("AGENTGUARD_DAEMON_URL")
                 .unwrap_or_else(|_| DEFAULT_DAEMON_URL.into()),
+            proxy_url: std::env::var("AGENTGUARD_PROXY_URL")
+                .unwrap_or_else(|_| DEFAULT_PROXY_URL.into()),
+            workspace_root: workspace_root(),
+            runtime: Arc::new(Mutex::new(RuntimeSupervisor::default())),
         })
         .invoke_handler(tauri::generate_handler![
             load_dashboard_snapshot,
             submit_sample_event,
             resolve_approval_request,
-            save_policy_rule
+            save_policy_rule,
+            set_policy_rule_enabled,
+            delete_policy_rule,
+            start_local_stack,
+            run_real_agent_demo
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentguard desktop application");

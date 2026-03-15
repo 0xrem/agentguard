@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     error::Error,
     fmt, fs, io,
     path::Path,
@@ -6,7 +7,8 @@ use std::{
 };
 
 use agentguard_models::{
-    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, Event, Rule,
+    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, Event, ManagedRule,
+    Rule,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -51,6 +53,8 @@ ON approval_requests(status, created_at_unix_ms DESC, id DESC);
 CREATE TABLE IF NOT EXISTS policy_rules (
     id TEXT PRIMARY KEY,
     created_at_unix_ms INTEGER NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
     rule_json TEXT NOT NULL
 );
 
@@ -433,7 +437,7 @@ impl AuditStore {
             .map_err(StoreError::from)
     }
 
-    pub fn save_rule(&self, rule: &Rule) -> Result<Rule> {
+    pub fn save_rule(&self, rule: &Rule) -> Result<ManagedRule> {
         if rule.id.trim().is_empty() {
             return Err(StoreError::InvalidInput(
                 "policy rule id cannot be empty".into(),
@@ -446,39 +450,106 @@ impl AuditStore {
             ));
         }
 
-        let created_at_unix_ms = unix_timestamp_ms()?;
+        let now = unix_timestamp_ms()?;
+        let existing = self.get_rule(&rule.id)?;
+        let created_at_unix_ms = existing
+            .as_ref()
+            .map(|managed| managed.created_at_unix_ms)
+            .unwrap_or(now);
+        let enabled = existing
+            .as_ref()
+            .map(|managed| managed.enabled)
+            .unwrap_or(true);
         let rule_json = serde_json::to_string(rule)?;
 
         self.connection.execute(
             r#"
-            INSERT INTO policy_rules (id, created_at_unix_ms, rule_json)
-            VALUES (?1, ?2, ?3)
+            INSERT INTO policy_rules (id, created_at_unix_ms, updated_at_unix_ms, enabled, rule_json)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(id) DO UPDATE SET
-                created_at_unix_ms = excluded.created_at_unix_ms,
+                updated_at_unix_ms = excluded.updated_at_unix_ms,
+                enabled = excluded.enabled,
                 rule_json = excluded.rule_json
             "#,
-            params![rule.id.as_str(), created_at_unix_ms, rule_json],
+            params![
+                rule.id.as_str(),
+                created_at_unix_ms,
+                now,
+                if enabled { 1 } else { 0 },
+                rule_json
+            ],
         )?;
 
-        Ok(rule.clone())
+        self.get_rule(&rule.id)?
+            .ok_or_else(|| StoreError::InvalidInput("policy rule was not found after save".into()))
     }
 
-    pub fn list_rules(&self) -> Result<Vec<Rule>> {
+    pub fn get_rule(&self, rule_id: &str) -> Result<Option<ManagedRule>> {
+        self.connection
+            .query_row(
+                r#"
+                SELECT id, created_at_unix_ms, updated_at_unix_ms, enabled, rule_json
+                FROM policy_rules
+                WHERE id = ?1
+                "#,
+                params![rule_id],
+                managed_rule_from_row,
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    pub fn list_rules(&self) -> Result<Vec<ManagedRule>> {
         let mut statement = self.connection.prepare(
             r#"
-            SELECT rule_json
+            SELECT id, created_at_unix_ms, updated_at_unix_ms, enabled, rule_json
             FROM policy_rules
-            ORDER BY created_at_unix_ms DESC, id DESC
+            ORDER BY updated_at_unix_ms DESC, id DESC
             "#,
         )?;
 
-        let rows = statement.query_map([], |row| {
-            let rule_json: String = row.get(0)?;
-            serde_json::from_str::<Rule>(&rule_json).map_err(json_decode_error)
-        })?;
+        let rows = statement.query_map([], managed_rule_from_row)?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(StoreError::from)
+    }
+
+    pub fn enabled_rules(&self) -> Result<Vec<Rule>> {
+        Ok(self
+            .list_rules()?
+            .into_iter()
+            .filter(|managed_rule| managed_rule.enabled)
+            .map(|managed_rule| managed_rule.rule)
+            .collect())
+    }
+
+    pub fn set_rule_enabled(&self, rule_id: &str, enabled: bool) -> Result<Option<ManagedRule>> {
+        let now = unix_timestamp_ms()?;
+        let updated = self.connection.execute(
+            r#"
+            UPDATE policy_rules
+            SET enabled = ?2,
+                updated_at_unix_ms = ?3
+            WHERE id = ?1
+            "#,
+            params![rule_id, if enabled { 1 } else { 0 }, now],
+        )?;
+
+        if updated == 0 {
+            return Ok(None);
+        }
+
+        self.get_rule(rule_id)
+    }
+
+    pub fn delete_rule(&self, rule_id: &str) -> Result<bool> {
+        Ok(self.connection.execute(
+            r#"
+            DELETE FROM policy_rules
+            WHERE id = ?1
+            "#,
+            params![rule_id],
+        )? > 0)
     }
 
     pub fn record_count(&self) -> Result<i64> {
@@ -489,8 +560,58 @@ impl AuditStore {
 
     fn initialize(&self) -> Result<()> {
         self.connection.execute_batch(SCHEMA)?;
+        self.migrate_policy_rules_table()?;
         Ok(())
     }
+
+    fn migrate_policy_rules_table(&self) -> Result<()> {
+        let columns = self.policy_rule_columns()?;
+
+        if !columns.contains("updated_at_unix_ms") {
+            self.connection.execute(
+                "ALTER TABLE policy_rules ADD COLUMN updated_at_unix_ms INTEGER",
+                [],
+            )?;
+        }
+
+        if !columns.contains("enabled") {
+            self.connection.execute(
+                "ALTER TABLE policy_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
+
+        self.connection.execute(
+            r#"
+            UPDATE policy_rules
+            SET updated_at_unix_ms = COALESCE(updated_at_unix_ms, created_at_unix_ms),
+                enabled = COALESCE(enabled, 1)
+            "#,
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    fn policy_rule_columns(&self) -> Result<BTreeSet<String>> {
+        let mut statement = self.connection.prepare("PRAGMA table_info(policy_rules)")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+        rows.collect::<std::result::Result<BTreeSet<_>, _>>()
+            .map_err(StoreError::from)
+    }
+}
+
+fn managed_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedRule> {
+    let rule_json: String = row.get(4)?;
+    let rule = serde_json::from_str::<Rule>(&rule_json).map_err(json_decode_error)?;
+
+    Ok(ManagedRule {
+        id: row.get(0)?,
+        created_at_unix_ms: row.get(1)?,
+        updated_at_unix_ms: row.get(2)?,
+        enabled: row.get::<_, i64>(3)? != 0,
+        rule,
+    })
 }
 
 fn approval_request_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRequest> {
@@ -717,11 +838,54 @@ mod tests {
         .for_target(MatchPattern::Exact("api.review.example".into()))
         .requiring_risk_at_least(RiskLevel::High);
 
-        store.save_rule(&rule).expect("rule should persist");
+        let managed_rule = store.save_rule(&rule).expect("rule should persist");
 
         let rules = store.list_rules().expect("rules should load");
 
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0], rule);
+        assert_eq!(managed_rule.rule, rule);
+        assert!(managed_rule.enabled);
+        assert_eq!(rules[0], managed_rule);
+    }
+
+    #[test]
+    fn disables_and_deletes_policy_rules() {
+        let store = AuditStore::open_in_memory().expect("in-memory store should initialize");
+        let rule = Rule::new(
+            "remembered-cli-command",
+            EnforcementAction::Allow,
+            "Remember operator approval for the local demo command.",
+        )
+        .with_priority(875)
+        .for_layer(Layer::Command)
+        .for_operation(Operation::ExecCommand)
+        .for_agent(MatchPattern::Exact(
+            "agentguard-python-live-demo-agent".into(),
+        ))
+        .for_target(MatchPattern::Exact("printf 'agentguard-live-demo'".into()));
+
+        let managed_rule = store.save_rule(&rule).expect("rule should persist");
+        let disabled = store
+            .set_rule_enabled(&managed_rule.id, false)
+            .expect("rule should disable")
+            .expect("disabled rule should load");
+        assert!(!disabled.enabled);
+        assert!(
+            store
+                .enabled_rules()
+                .expect("enabled rules should load")
+                .is_empty()
+        );
+
+        let deleted = store
+            .delete_rule(&managed_rule.id)
+            .expect("rule should delete");
+        assert!(deleted);
+        assert!(
+            store
+                .get_rule(&managed_rule.id)
+                .expect("rule lookup should succeed")
+                .is_none()
+        );
     }
 }

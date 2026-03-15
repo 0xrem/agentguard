@@ -1,17 +1,24 @@
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
+  deletePolicyRule,
   loadDashboard,
   resolveApprovalRequest,
+  runRealAgentDemo,
   savePolicyRule,
+  setPolicyRuleEnabled,
+  startLocalStack,
   submitSampleEvent,
 } from "./api";
 import type {
   ApprovalRequest,
   AuditRecord,
   DashboardSnapshot,
+  DemoRunResult,
   EnforcementAction,
+  ManagedRule,
   PolicyRule,
   RiskCounts,
+  RuntimeStartResult,
   SampleEventKind,
 } from "./types";
 
@@ -69,6 +76,18 @@ const EMPTY_COUNTS: RiskCounts = {
   kill: 0,
 };
 
+interface RuleDraft {
+  id: string;
+  action: "allow" | "block";
+  priority: number;
+  layer: PolicyRule["layer"];
+  operation: PolicyRule["operation"];
+  minimum_risk: PolicyRule["minimum_risk"];
+  agent_value: string;
+  target_value: string;
+  reason: string;
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,6 +102,15 @@ export default function App() {
   const [resolvingAction, setResolvingAction] = useState<Exclude<EnforcementAction, "ask"> | null>(
     null,
   );
+  const [startingStack, setStartingStack] = useState(false);
+  const [runningDemo, setRunningDemo] = useState(false);
+  const [stackResult, setStackResult] = useState<RuntimeStartResult | null>(null);
+  const [demoResult, setDemoResult] = useState<DemoRunResult | null>(null);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
+  const [savingRule, setSavingRule] = useState(false);
+  const [togglingRuleId, setTogglingRuleId] = useState<string | null>(null);
+  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshDashboard(true);
@@ -115,6 +143,18 @@ export default function App() {
     setResolutionNote("");
     setRememberDecision(false);
   }, [activeApprovalId]);
+
+  useEffect(() => {
+    if (editingRuleId === null) {
+      return;
+    }
+
+    const activeRule = snapshot?.remembered_rules.find((rule) => rule.id === editingRuleId);
+    if (!activeRule) {
+      setEditingRuleId(null);
+      setRuleDraft(null);
+    }
+  }, [editingRuleId, snapshot]);
 
   async function refreshDashboard(initial: boolean) {
     if (initial) {
@@ -188,6 +228,88 @@ export default function App() {
     }
   }
 
+  async function handleStartLocalStack() {
+    setStartingStack(true);
+    try {
+      const result = await startLocalStack();
+      setStackResult(result);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (stackError) {
+      setError(getErrorMessage(stackError));
+    } finally {
+      setStartingStack(false);
+    }
+  }
+
+  async function handleRunRealDemo() {
+    setRunningDemo(true);
+    try {
+      const result = await runRealAgentDemo();
+      setDemoResult(result);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (demoError) {
+      setError(getErrorMessage(demoError));
+    } finally {
+      setRunningDemo(false);
+    }
+  }
+
+  async function handleSaveRuleEdit() {
+    if (!ruleDraft) {
+      return;
+    }
+
+    setSavingRule(true);
+    try {
+      await savePolicyRule(policyRuleFromDraft(ruleDraft));
+      setEditingRuleId(null);
+      setRuleDraft(null);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (ruleError) {
+      setError(getErrorMessage(ruleError));
+    } finally {
+      setSavingRule(false);
+    }
+  }
+
+  async function handleToggleRule(rule: ManagedRule) {
+    setTogglingRuleId(rule.id);
+    try {
+      await setPolicyRuleEnabled(rule.id, !rule.enabled);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (ruleError) {
+      setError(getErrorMessage(ruleError));
+    } finally {
+      setTogglingRuleId(null);
+    }
+  }
+
+  async function handleDeleteRule(rule: ManagedRule) {
+    setDeletingRuleId(rule.id);
+    try {
+      await deletePolicyRule(rule.id);
+      if (editingRuleId === rule.id) {
+        setEditingRuleId(null);
+        setRuleDraft(null);
+      }
+      setError(null);
+      await refreshDashboard(false);
+    } catch (ruleError) {
+      setError(getErrorMessage(ruleError));
+    } finally {
+      setDeletingRuleId(null);
+    }
+  }
+
+  function handleEditRule(rule: ManagedRule) {
+    setEditingRuleId(rule.id);
+    setRuleDraft(ruleDraftFromManagedRule(rule));
+  }
+
   const riskCards = useMemo(() => {
     const counts = snapshot?.counts ?? EMPTY_COUNTS;
     return [
@@ -216,6 +338,7 @@ export default function App() {
   const rememberableDecision = activeApproval
     ? buildRememberedRule(activeApproval, "allow", resolutionNote.trim() || null) !== null
     : false;
+  const editingRule = rememberedRules.find((rule) => rule.id === editingRuleId) ?? null;
 
   return (
     <div className="app-shell">
@@ -338,6 +461,67 @@ export default function App() {
                 </div>
               </div>
             ) : null}
+            <div className="live-demo-panel">
+              <div className="section-heading section-heading-compact">
+                <p className="eyebrow">Live integration</p>
+                <h2>Start the real runtime path</h2>
+              </div>
+              <p className="hero-text">
+                Bring up the local daemon and proxy from the desktop, then run a real SDK-backed
+                demo agent that waits on the same approval loop as external integrations.
+              </p>
+              <div className="live-demo-actions">
+                <button
+                  className="button button-ghost"
+                  type="button"
+                  onClick={() => void handleStartLocalStack()}
+                  disabled={startingStack}
+                >
+                  {startingStack ? "Starting stack..." : "Start local stack"}
+                </button>
+                <button
+                  className="button button-primary"
+                  type="button"
+                  onClick={() => void handleRunRealDemo()}
+                  disabled={runningDemo}
+                >
+                  {runningDemo ? "Running live demo..." : "Run real agent demo"}
+                </button>
+              </div>
+              {stackResult ? (
+                <div className="live-demo-status">
+                  <strong>{stackResult.message}</strong>
+                  <span>
+                    Daemon: {stackResult.daemon_url}
+                    {stackResult.daemon_pid ? ` (pid ${stackResult.daemon_pid})` : ""}
+                  </span>
+                  <span>
+                    Proxy: {stackResult.proxy_url}
+                    {stackResult.proxy_pid ? ` (pid ${stackResult.proxy_pid})` : ""}
+                  </span>
+                </div>
+              ) : null}
+              {demoResult ? (
+                <div className="demo-result">
+                  <div className="remembered-rule-header">
+                    <span className="scenario-eyebrow">Last real run</span>
+                    <span className="rule-priority">{demoResult.mode}</span>
+                  </div>
+                  <strong>{demoResult.message}</strong>
+                  <p className="daemon-url">{demoResult.command}</p>
+                  <div className="demo-result-grid">
+                    <div>
+                      <span className="scenario-eyebrow">stdout</span>
+                      <pre>{demoResult.stdout || "(empty)"}</pre>
+                    </div>
+                    <div>
+                      <span className="scenario-eyebrow">stderr</span>
+                      <pre>{demoResult.stderr || "(empty)"}</pre>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </section>
 
@@ -379,6 +563,24 @@ export default function App() {
                           <dt>Target</dt>
                           <dd>{formatTarget(record.event.target)}</dd>
                         </div>
+                        {record.event.agent.process_id ? (
+                          <div>
+                            <dt>PID</dt>
+                            <dd>{record.event.agent.process_id}</dd>
+                          </div>
+                        ) : null}
+                        {record.event.agent.executable_path ? (
+                          <div>
+                            <dt>Executable</dt>
+                            <dd>{record.event.agent.executable_path}</dd>
+                          </div>
+                        ) : null}
+                        {record.event.metadata.cwd ? (
+                          <div>
+                            <dt>Working Dir</dt>
+                            <dd>{record.event.metadata.cwd}</dd>
+                          </div>
+                        ) : null}
                       </dl>
                     </div>
                   </article>
@@ -446,26 +648,62 @@ export default function App() {
               {rememberedRules.length > 0 ? (
                 <div className="remembered-rule-list">
                   {rememberedRules.map((rule) => (
-                    <article key={rule.id} className="remembered-rule-card">
+                    <article
+                      key={rule.id}
+                      className={`remembered-rule-card ${rule.enabled ? "" : "disabled"}`}
+                    >
                       <div className="remembered-rule-header">
-                        <span className={`decision-chip ${rule.action}`}>{rule.action}</span>
-                        <span className="rule-priority">priority {rule.priority}</span>
+                        <span className={`decision-chip ${rule.rule.action}`}>
+                          {rule.rule.action}
+                        </span>
+                        <span className="rule-priority">
+                          {rule.enabled ? "enabled" : "disabled"} · priority {rule.rule.priority}
+                        </span>
                       </div>
-                      <strong>{rule.reason}</strong>
+                      <strong>{rule.rule.reason}</strong>
                       <dl className="remembered-rule-details">
                         <div>
                           <dt>Agent</dt>
-                          <dd>{formatMatchPattern(rule.agent)}</dd>
+                          <dd>{formatMatchPattern(rule.rule.agent)}</dd>
                         </div>
                         <div>
                           <dt>Operation</dt>
-                          <dd>{rule.operation ?? "any"}</dd>
+                          <dd>{rule.rule.operation ?? "any"}</dd>
                         </div>
                         <div>
                           <dt>Target</dt>
-                          <dd>{formatMatchPattern(rule.target)}</dd>
+                          <dd>{formatMatchPattern(rule.rule.target)}</dd>
                         </div>
                       </dl>
+                      <div className="rule-actions">
+                        <button
+                          className="button button-ghost button-inline"
+                          type="button"
+                          onClick={() => handleEditRule(rule)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="button button-ghost button-inline"
+                          type="button"
+                          onClick={() => void handleToggleRule(rule)}
+                          disabled={togglingRuleId === rule.id}
+                        >
+                          {togglingRuleId === rule.id
+                            ? "Saving..."
+                            : rule.enabled
+                              ? "Disable"
+                              : "Enable"}
+                        </button>
+                        <button
+                          className="button button-danger button-inline"
+                          type="button"
+                          onClick={() => void handleDeleteRule(rule)}
+                          disabled={deletingRuleId === rule.id}
+                        >
+                          {deletingRuleId === rule.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
                     </article>
                   ))}
                 </div>
@@ -475,6 +713,150 @@ export default function App() {
                   as a local rule.
                 </p>
               )}
+              {editingRule && ruleDraft ? (
+                <div className="rule-editor">
+                  <div className="remembered-rule-header">
+                    <span className="scenario-eyebrow">Editing rule</span>
+                    <span className="rule-priority">{editingRule.id}</span>
+                  </div>
+                  <div className="rule-editor-grid">
+                    <label className="rule-editor-field">
+                      <span>Reason</span>
+                      <textarea
+                        value={ruleDraft.reason}
+                        onChange={(event) =>
+                          setRuleDraft({ ...ruleDraft, reason: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Action</span>
+                      <select
+                        value={ruleDraft.action}
+                        onChange={(event) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            action: event.target.value as RuleDraft["action"],
+                          })
+                        }
+                      >
+                        <option value="allow">allow</option>
+                        <option value="block">block</option>
+                      </select>
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Priority</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        value={ruleDraft.priority}
+                        onChange={(event) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            priority: Number(event.target.value) || 100,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Minimum Risk</span>
+                      <select
+                        value={ruleDraft.minimum_risk ?? "any"}
+                        onChange={(event) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            minimum_risk:
+                              event.target.value === "any"
+                                ? null
+                                : (event.target.value as RuleDraft["minimum_risk"]),
+                          })
+                        }
+                      >
+                        <option value="any">any</option>
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="critical">critical</option>
+                      </select>
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Layer</span>
+                      <select
+                        value={ruleDraft.layer ?? "any"}
+                        onChange={(event) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            layer:
+                              event.target.value === "any"
+                                ? null
+                                : (event.target.value as RuleDraft["layer"]),
+                          })
+                        }
+                      >
+                        <option value="any">any</option>
+                        <option value="tool">tool</option>
+                        <option value="command">command</option>
+                        <option value="prompt">prompt</option>
+                      </select>
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Operation</span>
+                      <input
+                        value={ruleDraft.operation ?? ""}
+                        placeholder="read_file, exec_command, model_response..."
+                        onChange={(event) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            operation:
+                              event.target.value.trim() === ""
+                                ? null
+                                : (event.target.value as RuleDraft["operation"]),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Agent Match</span>
+                      <input
+                        value={ruleDraft.agent_value}
+                        onChange={(event) =>
+                          setRuleDraft({ ...ruleDraft, agent_value: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="rule-editor-field">
+                      <span>Target Match</span>
+                      <input
+                        value={ruleDraft.target_value}
+                        onChange={(event) =>
+                          setRuleDraft({ ...ruleDraft, target_value: event.target.value })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="rule-actions">
+                    <button
+                      className="button button-ghost button-inline"
+                      type="button"
+                      onClick={() => {
+                        setEditingRuleId(null);
+                        setRuleDraft(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="button button-primary button-inline"
+                      type="button"
+                      onClick={() => void handleSaveRuleEdit()}
+                      disabled={savingRule}
+                    >
+                      {savingRule ? "Saving..." : "Save rule"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -513,6 +895,24 @@ export default function App() {
                 <dt>Target</dt>
                 <dd>{formatTarget(activeApproval.audit_record.event.target)}</dd>
               </div>
+              {activeApproval.audit_record.event.agent.process_id ? (
+                <div>
+                  <dt>PID</dt>
+                  <dd>{activeApproval.audit_record.event.agent.process_id}</dd>
+                </div>
+              ) : null}
+              {activeApproval.audit_record.event.agent.executable_path ? (
+                <div>
+                  <dt>Executable</dt>
+                  <dd>{activeApproval.audit_record.event.agent.executable_path}</dd>
+                </div>
+              ) : null}
+              {activeApproval.audit_record.event.metadata.cwd ? (
+                <div>
+                  <dt>Working Dir</dt>
+                  <dd>{activeApproval.audit_record.event.metadata.cwd}</dd>
+                </div>
+              ) : null}
             </dl>
 
             <div className="approval-metadata">
@@ -673,6 +1073,53 @@ function defaultRememberedRuleReason(
   return action === "allow"
     ? `Remembered operator approval for ${approval.audit_record.event.agent.name} on ${formatTarget(approval.audit_record.event.target)}.`
     : `Remembered operator deny rule for ${approval.audit_record.event.agent.name} on ${formatTarget(approval.audit_record.event.target)}.`;
+}
+
+function ruleDraftFromManagedRule(rule: ManagedRule): RuleDraft {
+  return {
+    id: rule.id,
+    action: rule.rule.action === "block" ? "block" : "allow",
+    priority: rule.rule.priority,
+    layer: rule.rule.layer,
+    operation: rule.rule.operation,
+    minimum_risk: rule.rule.minimum_risk,
+    agent_value: getPatternValue(rule.rule.agent),
+    target_value: getPatternValue(rule.rule.target),
+    reason: rule.rule.reason,
+  };
+}
+
+function policyRuleFromDraft(draft: RuleDraft): PolicyRule {
+  return {
+    id: draft.id,
+    priority: draft.priority,
+    layer: draft.layer,
+    operation: draft.operation,
+    minimum_risk: draft.minimum_risk,
+    action: draft.action,
+    reason: draft.reason.trim(),
+    agent: draft.agent_value.trim()
+      ? { type: "exact", value: draft.agent_value.trim() }
+      : { type: "any" },
+    target: draft.target_value.trim()
+      ? { type: "exact", value: draft.target_value.trim() }
+      : { type: "any" },
+  };
+}
+
+function getPatternValue(pattern: PolicyRule["agent"]): string {
+  switch (pattern.type) {
+    case "exact":
+    case "prefix":
+    case "contains":
+    case "contains_insensitive":
+      return pattern.value;
+    case "one_of":
+      return pattern.value.join(", ");
+    case "any":
+    default:
+      return "";
+  }
 }
 
 function formatMatchPattern(pattern: PolicyRule["agent"]): string {

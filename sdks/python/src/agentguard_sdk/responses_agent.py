@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
-from .client import AgentGuardClient
+from .client import AgentGuardClient, infer_runtime_agent_identity
 from .errors import AgentGuardHttpError
 from .types import GuardedResult
 from .wrappers import (
@@ -159,10 +161,7 @@ def create_response(
     if previous_response_id is not None:
         body["previous_response_id"] = previous_response_id
 
-    headers = {
-        "content-type": "application/json",
-        "x-agentguard-agent-name": agent_name,
-    }
+    headers = build_proxy_headers(agent_name)
     if api_key:
         headers["authorization"] = f"Bearer {api_key}"
 
@@ -327,6 +326,19 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def build_proxy_headers(agent_name: str) -> dict[str, str]:
+    runtime_agent = infer_runtime_agent_identity(agent_name)
+    return {
+        "content-type": "application/json",
+        "x-agentguard-agent-name": runtime_agent.name,
+        "x-agentguard-agent-pid": str(runtime_agent.process_id or ""),
+        "x-agentguard-agent-ppid": str(runtime_agent.parent_process_id or ""),
+        "x-agentguard-agent-executable": runtime_agent.executable_path or "",
+        "x-agentguard-agent-cwd": os.getcwd(),
+        "x-agentguard-agent-script": str(Path(sys.argv[0]).expanduser().resolve()),
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
