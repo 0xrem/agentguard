@@ -1,8 +1,10 @@
 /target
+apps/desktop/src-tauri/target
 node_modules
 dist
 /.DS_Store
 *.db
 *.db-shm
 *.db-wal
-
+.playwright-cli
+apps/desktop/src-tauri/gen

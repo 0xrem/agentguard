@@ -225,8 +225,8 @@ Do not optimize for these yet:
 2. Build the policy engine with tests for critical behaviors.
 3. Stand up a daemon that can evaluate sample events and emit decisions.
 4. Add a daemon API and local SQLite audit store.
-5. Add agent wrappers for Node and Python.
-6. Add the Tauri desktop app.
+5. Add the Tauri desktop app.
+6. Add agent wrappers for Python.
 
 ## Reference Links
 

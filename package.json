@@ -1,6 +1,9 @@
 {
   "name": "agentguard-monorepo",
   "private": true,
-  "packageManager": "pnpm@10.32.0"
+  "packageManager": "pnpm@10.32.0",
+  "scripts": {
+    "desktop:dev": "pnpm --filter @agentguard/desktop tauri dev",
+    "desktop:build": "pnpm --filter @agentguard/desktop tauri build"
+  }
 }
-

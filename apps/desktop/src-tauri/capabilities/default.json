@@ -1,0 +1,7 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the AgentGuard desktop window.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
+
