@@ -127,6 +127,15 @@ If not, it falls back to a harmless local command so you can still verify the re
 The packaged desktop app now bundles the local daemon, proxy, and Python live-demo assets instead of assuming it is still running inside the repository checkout.
 It also writes its runtime database and logs under the app support directory and exposes first-run diagnostics in the control room so missing prerequisites are visible.
 
+For macOS release work, the repository also includes:
+
+- `pnpm release:acceptance`: copies the packaged app to a temporary install location outside the repository and validates the bundled runtime end to end
+- `pnpm release:verify`: inspects bundle contents, codesign metadata, Gatekeeper assessment, and stapler state
+- `pnpm release:macos`: builds the app, runs acceptance, applies signing, and notarizes when Apple credentials are available
+
+Unsigned local validation works with ad hoc signing.
+Real external distribution still requires a `Developer ID Application` certificate plus a notary profile exposed through `APPLE_CODESIGN_IDENTITY` and `APPLE_NOTARY_PROFILE`.
+
 ## Example Policies
 
 ```text

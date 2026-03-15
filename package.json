@@ -8,6 +8,11 @@
     "stack:down": "./scripts/stop-local-stack.sh",
     "demo:live": "./scripts/run-live-demo.sh",
     "desktop:dev": "pnpm --filter @agentguard/desktop tauri dev",
-    "desktop:build": "pnpm --filter @agentguard/desktop tauri build"
+    "desktop:build": "pnpm --filter @agentguard/desktop tauri build",
+    "release:verify": "./scripts/release/verify-macos-app.sh",
+    "release:acceptance": "./scripts/release/install-acceptance.sh",
+    "release:sign": "./scripts/release/sign-macos-app.sh",
+    "release:notarize": "./scripts/release/notarize-macos-app.sh",
+    "release:macos": "./scripts/release/release-macos.sh"
   }
 }
