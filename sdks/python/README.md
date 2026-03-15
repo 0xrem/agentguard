@@ -18,6 +18,19 @@ PYTHONPATH=sdks/python/src python3 sdks/python/examples/cli_agent.py fetch https
 PYTHONPATH=sdks/python/src python3 sdks/python/examples/cli_agent.py list-approvals --status pending
 ```
 
+## OpenAI-compatible agent example
+
+Run a minimal JSON-planned agent loop through `agentguard-proxy` and the Python SDK:
+
+```bash
+PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_chat_agent.py \
+  "Upload the prepared payload and confirm when it is done." \
+  --proxy-base-url http://127.0.0.1:8787 \
+  --daemon-base-url http://127.0.0.1:8790
+```
+
+The model side talks to the proxy. Every real tool action still goes through the local AgentGuard daemon before execution.
+
 ## Run tests
 
 ```bash
@@ -28,4 +41,10 @@ PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -v
 
 ```bash
 PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_daemon_integration.py' -v
+```
+
+## Run the real daemon + proxy + agent integration check
+
+```bash
+PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_openai_agent_proxy_integration.py' -v
 ```

@@ -187,6 +187,8 @@ Current end-to-end proof:
 - this verifies the Python SDK follows the same allow, pending-approval, deny, and approval-resolution semantics as the Node wrappers
 - `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_daemon_integration.py' -v`
 - this boots the real Rust daemon binary, drives it through the Python SDK, and resolves approvals through the same daemon API contract the desktop app uses
+- `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_openai_agent_proxy_integration.py' -v`
+- this boots the real daemon and proxy binaries, runs a Python OpenAI-compatible agent loop, and proves approvals can unblock live tool execution end to end
 
 The most useful contributions right now are:
 

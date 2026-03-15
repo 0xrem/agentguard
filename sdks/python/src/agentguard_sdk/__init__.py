@@ -10,6 +10,7 @@ from .client import (
     with_metadata,
 )
 from .errors import AgentGuardHttpError, PendingApprovalError, PolicyDeniedError
+from .openai_agent import run_agent
 from .types import (
     AgentIdentity,
     AgentLike,
@@ -72,6 +73,7 @@ __all__ = [
     "normalize_agent_identity",
     "path_target",
     "prompt_target",
+    "run_agent",
     "should_deny",
     "with_metadata",
 ]
