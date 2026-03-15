@@ -235,6 +235,34 @@ export default function App() {
     }
   }
 
+  async function handleDismissApproval() {
+    const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
+    if (!activeApproval) {
+      return;
+    }
+
+    // Dismiss by denying without killing - just close the modal
+    setResolvingAction("block");
+    try {
+      await resolveApprovalRequest(
+        activeApproval.id,
+        "block",
+        "Dismissed by user",
+      );
+      await refreshDashboard(false);
+    } catch (dismissError) {
+      setError(getErrorMessage(dismissError));
+    } finally {
+      setResolvingAction(null);
+    }
+  }
+
+  function handleCloseApprovalModal() {
+    // Just clear the active approval ID without making any API call
+    // This allows the user to close the modal without affecting the approval state
+    setActiveApprovalId(null);
+  }
+
   async function handleStartLocalStack() {
     setStartingStack(true);
     try {
@@ -909,12 +937,28 @@ export default function App() {
       </main>
 
       {activeApproval ? (
-        <div className="approval-modal-scrim">
-          <section className="approval-modal card" aria-modal="true" role="dialog">
+        <div className="approval-modal-scrim" onClick={() => void handleCloseApprovalModal()}>
+          <section 
+            className="approval-modal card" 
+            aria-modal="true" 
+            role="dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="approval-modal-header">
-              <div>
+              <div className="approval-modal-title-group">
                 <p className="eyebrow">Approval required</p>
                 <h2>{activeApproval.audit_record.event.agent.name} needs a decision</h2>
+              </div>
+              <div className="approval-modal-header-actions">
+                <button
+                  className="button button-ghost button-icon"
+                  type="button"
+                  onClick={() => void handleCloseApprovalModal()}
+                  title="Close"
+                  aria-label="Close approval dialog"
+                >
+                  ✕
+                </button>
               </div>
               <div className="approval-modal-badges">
                 <span className={`decision-chip ${activeApproval.requested_decision.action}`}>
