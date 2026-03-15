@@ -81,6 +81,29 @@ export interface RuntimeStartResult {
   message: string;
 }
 
+export interface RuntimeEnvironment {
+  mode: "bundled" | "workspace";
+  runtime_root: string;
+  workspace_root: string | null;
+  resource_root: string | null;
+  app_support_root: string;
+  database_path: string;
+  daemon_source: string;
+  daemon_launch_command: string;
+  proxy_source: string;
+  proxy_launch_command: string;
+  python_command: string | null;
+  python_path_root: string | null;
+  live_demo_script_path: string | null;
+  openai_demo_script_path: string | null;
+  bundled_assets_ready: boolean;
+  python_available: boolean;
+  live_demo_ready: boolean;
+  openai_key_available: boolean;
+  issues: string[];
+  message: string;
+}
+
 export interface DemoRunResult {
   mode: "python_sdk" | "openai_proxy";
   command: string;

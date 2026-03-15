@@ -5,7 +5,7 @@
   "identifier": "com.agentguard.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build && cargo build --release -p agentguard-daemon -p agentguard-proxy",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
@@ -26,6 +26,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"]
+    "targets": ["app"],
+    "resources": {
+      "bundle-resources/runtime/agentguard-daemon": "runtime/agentguard-daemon",
+      "bundle-resources/runtime/agentguard-proxy": "runtime/agentguard-proxy",
+      "bundle-resources/python/agentguard_sdk": "python/agentguard_sdk",
+      "bundle-resources/python/live_demo_agent.py": "python/live_demo_agent.py",
+      "bundle-resources/python/openai_chat_agent.py": "python/openai_chat_agent.py"
+    }
   }
 }

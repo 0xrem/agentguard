@@ -124,6 +124,9 @@ What each command does:
 If you already have `OPENAI_API_KEY` set, the live demo uses the proxy-backed OpenAI-compatible path.
 If not, it falls back to a harmless local command so you can still verify the real approval loop end to end.
 
+The packaged desktop app now bundles the local daemon, proxy, and Python live-demo assets instead of assuming it is still running inside the repository checkout.
+It also writes its runtime database and logs under the app support directory and exposes first-run diagnostics in the control room so missing prerequisites are visible.
+
 ## Example Policies
 
 ```text
@@ -234,6 +237,7 @@ From `apps/desktop`, the control room can now:
 - run a real Python SDK demo agent against that stack
 - surface the same approval request in the native desktop queue
 - remember, edit, disable, and delete local approval-derived rules after a decision
+- prefer bundled runtime assets when launched from an installed desktop app, with workspace fallbacks for development builds
 
 If `OPENAI_API_KEY` is present, the desktop runs the OpenAI-compatible proxy demo path.
 If it is not present, the desktop falls back to `sdks/python/examples/live_demo_agent.py`, which still exercises the real daemon approval flow with a harmless local command.

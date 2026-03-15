@@ -2,6 +2,7 @@ import { startTransition, useEffect, useMemo, useState } from "react";
 import {
   deletePolicyRule,
   loadDashboard,
+  loadRuntimeEnvironment,
   resolveApprovalRequest,
   runRealAgentDemo,
   savePolicyRule,
@@ -18,6 +19,7 @@ import type {
   ManagedRule,
   PolicyRule,
   RiskCounts,
+  RuntimeEnvironment,
   RuntimeStartResult,
   SampleEventKind,
 } from "./types";
@@ -106,6 +108,7 @@ export default function App() {
   const [runningDemo, setRunningDemo] = useState(false);
   const [stackResult, setStackResult] = useState<RuntimeStartResult | null>(null);
   const [demoResult, setDemoResult] = useState<DemoRunResult | null>(null);
+  const [runtimeEnvironment, setRuntimeEnvironment] = useState<RuntimeEnvironment | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const [savingRule, setSavingRule] = useState(false);
@@ -164,10 +167,14 @@ export default function App() {
     }
 
     try {
-      const nextSnapshot = await loadDashboard(30);
+      const [nextSnapshot, nextRuntimeEnvironment] = await Promise.all([
+        loadDashboard(30),
+        loadRuntimeEnvironment(),
+      ]);
       setError(null);
       startTransition(() => {
         setSnapshot(nextSnapshot);
+        setRuntimeEnvironment(nextRuntimeEnvironment);
       });
     } catch (refreshError) {
       setError(getErrorMessage(refreshError));
@@ -339,6 +346,7 @@ export default function App() {
     ? buildRememberedRule(activeApproval, "allow", resolutionNote.trim() || null) !== null
     : false;
   const editingRule = rememberedRules.find((rule) => rule.id === editingRuleId) ?? null;
+  const runtimeIssues = runtimeEnvironment?.issues ?? [];
 
   return (
     <div className="app-shell">
@@ -470,6 +478,44 @@ export default function App() {
                 Bring up the local daemon and proxy from the desktop, then run a real SDK-backed
                 demo agent that waits on the same approval loop as external integrations.
               </p>
+              {runtimeEnvironment ? (
+                <div className="runtime-diagnostics">
+                  <div className="remembered-rule-header">
+                    <span className="scenario-eyebrow">Runtime environment</span>
+                    <span className="rule-priority">{runtimeEnvironment.mode}</span>
+                  </div>
+                  <strong>{runtimeEnvironment.message}</strong>
+                  <div className="runtime-diagnostic-grid">
+                    <div>
+                      <span className="scenario-eyebrow">Daemon</span>
+                      <p>{runtimeEnvironment.daemon_source}</p>
+                    </div>
+                    <div>
+                      <span className="scenario-eyebrow">Proxy</span>
+                      <p>{runtimeEnvironment.proxy_source}</p>
+                    </div>
+                    <div>
+                      <span className="scenario-eyebrow">Python</span>
+                      <p>{runtimeEnvironment.python_command ?? "missing"}</p>
+                    </div>
+                    <div>
+                      <span className="scenario-eyebrow">Data root</span>
+                      <p>{runtimeEnvironment.app_support_root}</p>
+                    </div>
+                  </div>
+                  {runtimeIssues.length > 0 ? (
+                    <ul className="runtime-issues">
+                      {runtimeIssues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="runtime-ready">
+                      Bundled runtime assets and the live demo path are ready on this machine.
+                    </p>
+                  )}
+                </div>
+              ) : null}
               <div className="live-demo-actions">
                 <button
                   className="button button-ghost"

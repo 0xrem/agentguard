@@ -7,6 +7,7 @@ import type {
   EnforcementAction,
   ManagedRule,
   PolicyRule,
+  RuntimeEnvironment,
   RuntimeStartResult,
   SampleEventKind,
 } from "./types";
@@ -140,6 +141,32 @@ export function mockDashboard(limit = 25): DashboardSnapshot {
     records,
     pending_approvals: previewPendingApprovals.slice(0, 10),
     remembered_rules: previewRememberedRules.slice(0, 20),
+  };
+}
+
+export function mockLoadRuntimeEnvironment(): RuntimeEnvironment {
+  return {
+    mode: "bundled",
+    runtime_root: "/Applications/AgentGuard.app/Contents/Resources",
+    workspace_root: "/Users/rem/Github/agentguard",
+    resource_root: "/Applications/AgentGuard.app/Contents/Resources",
+    app_support_root: "/Users/rem/Library/Application Support/com.agentguard.desktop",
+    database_path: "/Users/rem/Library/Application Support/com.agentguard.desktop/agentguard.db",
+    daemon_source: "bundled runtime",
+    daemon_launch_command: "/Applications/AgentGuard.app/Contents/Resources/runtime/agentguard-daemon",
+    proxy_source: "bundled runtime",
+    proxy_launch_command: "/Applications/AgentGuard.app/Contents/Resources/runtime/agentguard-proxy",
+    python_command: "python3",
+    python_path_root: "/Applications/AgentGuard.app/Contents/Resources/python",
+    live_demo_script_path: "/Applications/AgentGuard.app/Contents/Resources/python/live_demo_agent.py",
+    openai_demo_script_path: "/Applications/AgentGuard.app/Contents/Resources/python/openai_chat_agent.py",
+    bundled_assets_ready: true,
+    python_available: true,
+    live_demo_ready: true,
+    openai_key_available: false,
+    issues: [],
+    message:
+      "Preview mode is simulating the installed app path with bundled runtime assets and local app data.",
   };
 }
 

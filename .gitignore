@@ -8,6 +8,7 @@ dist
 *.db-wal
 .playwright-cli
 apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/bundle-resources
 __pycache__/
 /.agentguard/
 *.egg-info/

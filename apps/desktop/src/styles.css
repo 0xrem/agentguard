@@ -424,7 +424,8 @@ textarea {
 
 .live-demo-status,
 .demo-result,
-.rule-editor {
+.rule-editor,
+.runtime-diagnostics {
   margin-top: 14px;
   padding: 16px 18px;
   border-radius: 20px;
@@ -442,6 +443,31 @@ textarea {
   display: block;
   color: #506175;
   line-height: 1.5;
+}
+
+.runtime-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.runtime-diagnostic-grid p,
+.runtime-ready {
+  margin: 6px 0 0;
+  color: #506175;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.runtime-issues {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: #9c3825;
+}
+
+.runtime-issues li + li {
+  margin-top: 6px;
 }
 
 .demo-result-grid {
@@ -909,6 +935,7 @@ textarea {
   }
 
   .demo-result-grid,
+  .runtime-diagnostic-grid,
   .rule-editor-grid {
     grid-template-columns: 1fr;
   }
