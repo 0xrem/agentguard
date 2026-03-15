@@ -1,7 +1,7 @@
 {
   "name": "@agentguard/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
@@ -23,4 +23,3 @@
     "vite": "^6.0.0"
   }
 }
-

@@ -1,6 +1,6 @@
 [package]
 name = "agentguard-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "AgentGuard desktop control room"
 authors = ["AgentGuard"]
 edition.workspace = true
@@ -21,4 +21,3 @@ serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
 tokio.workspace = true
-

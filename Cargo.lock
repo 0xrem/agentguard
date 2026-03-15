@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentguard-daemon"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agentguard-models",
  "agentguard-policy",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "agentguard-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agentguard-models",
  "reqwest 0.12.28",
@@ -37,21 +37,21 @@ dependencies = [
 
 [[package]]
 name = "agentguard-models"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "agentguard-policy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agentguard-models",
 ]
 
 [[package]]
 name = "agentguard-proxy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agentguard-daemon",
  "agentguard-models",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "agentguard-store"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "agentguard-models",
  "rusqlite",

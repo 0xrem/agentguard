@@ -1,6 +1,6 @@
 {
   "name": "@agentguard/sdk-node",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Node.js SDK for AgentGuard daemon integration",
   "type": "module",
   "main": "./dist/index.js",
@@ -27,4 +27,3 @@
     "typescript": "^5.9.3"
   }
 }
-
