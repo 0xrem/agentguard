@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .client import AgentGuardClient
+from .errors import AgentGuardHttpError
 from .types import GuardedResult
 from .wrappers import (
     DEFAULT_WAIT_FOR_APPROVAL_MS,
@@ -166,7 +167,7 @@ def create_response(
         headers["authorization"] = f"Bearer {api_key}"
 
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/responses",
+        responses_endpoint(base_url),
         data=json.dumps(body).encode("utf-8"),
         method="POST",
         headers=headers,
@@ -177,7 +178,30 @@ def create_response(
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         body_text = error.read().decode("utf-8")
-        raise RuntimeError(f"responses request failed with {error.code}: {body_text}") from error
+        raise build_upstream_http_error(error.code, body_text) from error
+
+
+def responses_endpoint(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/responses"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/responses"
+    return f"{normalized}/v1/responses"
+
+
+def build_upstream_http_error(status_code: int, body_text: str) -> Exception:
+    try:
+        details = json.loads(body_text)
+    except json.JSONDecodeError:
+        return RuntimeError(f"responses request failed with {status_code}: {body_text}")
+
+    error = details.get("error") if isinstance(details, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str):
+        return AgentGuardHttpError(message=message, status=status_code, details=details)
+
+    return RuntimeError(f"responses request failed with {status_code}: {body_text}")
 
 
 def extract_function_calls(response: dict[str, Any]) -> list[ResponseFunctionCall]:
@@ -347,5 +371,7 @@ __all__ = [
     "extract_final_output",
     "extract_function_calls",
     "main",
+    "build_upstream_http_error",
+    "responses_endpoint",
     "run_agent",
 ]

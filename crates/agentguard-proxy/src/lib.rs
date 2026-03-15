@@ -99,6 +99,7 @@ pub fn app(state: ProxyState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/responses", post(responses))
         .with_state(state)
 }
 
@@ -179,14 +180,14 @@ impl PromptGuardService {
         evaluation: EvaluationOutcome,
     ) -> Result<InspectionOutcome, ProxyError> {
         match evaluation.status {
-            EvaluationStatus::Completed => Ok(InspectionOutcome::completed(
-                phase,
-                evaluation.audit_record,
-            )),
+            EvaluationStatus::Completed => {
+                Ok(InspectionOutcome::completed(phase, evaluation.audit_record))
+            }
             EvaluationStatus::PendingApproval => {
                 let approval_request = evaluation.approval_request.ok_or_else(|| {
                     ProxyError::Config(
-                        "prompt guard evaluation returned pending without an approval request".into(),
+                        "prompt guard evaluation returned pending without an approval request"
+                            .into(),
                     )
                 })?;
 
@@ -194,10 +195,9 @@ impl PromptGuardService {
                     .wait_for_approval_resolution(approval_request.id)
                     .await?;
                 match waited.status {
-                    EvaluationStatus::Completed => Ok(InspectionOutcome::completed(
-                        phase,
-                        waited.audit_record,
-                    )),
+                    EvaluationStatus::Completed => {
+                        Ok(InspectionOutcome::completed(phase, waited.audit_record))
+                    }
                     EvaluationStatus::PendingApproval => Ok(InspectionOutcome::pending(
                         phase,
                         waited.audit_record,
@@ -275,6 +275,35 @@ impl PromptPhase {
         match self {
             Self::Request => Operation::ModelRequest,
             Self::Response => Operation::ModelResponse,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProxyApi {
+    ChatCompletions,
+    Responses,
+}
+
+impl ProxyApi {
+    fn upstream_path(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "/v1/chat/completions",
+            Self::Responses => "/v1/responses",
+        }
+    }
+
+    fn extract_request_text(self, body: &Value) -> String {
+        match self {
+            Self::ChatCompletions => extract_chat_request_text(body),
+            Self::Responses => extract_responses_request_text(body),
+        }
+    }
+
+    fn extract_response_text(self, body: &Value) -> String {
+        match self {
+            Self::ChatCompletions => extract_chat_response_text(body),
+            Self::Responses => extract_responses_response_text(body),
         }
     }
 }
@@ -499,7 +528,11 @@ pub async fn run(config: ProxyConfig) -> Result<(), ProxyError> {
     println!("agentguard-proxy listening on http://{bind_addr}");
     println!(
         "forwarding upstream chat completions to {}",
-        state.upstream_chat_url()
+        state.upstream_url(ProxyApi::ChatCompletions)
+    );
+    println!(
+        "forwarding upstream responses to {}",
+        state.upstream_url(ProxyApi::Responses)
     );
     println!(
         "waiting up to {}ms for prompt approvals",
@@ -522,6 +555,23 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ProxyError> {
+    proxy_json_request(state, headers, body, ProxyApi::ChatCompletions).await
+}
+
+async fn responses(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, ProxyError> {
+    proxy_json_request(state, headers, body, ProxyApi::Responses).await
+}
+
+async fn proxy_json_request(
+    state: ProxyState,
+    headers: HeaderMap,
+    body: Value,
+    api: ProxyApi,
+) -> Result<Response, ProxyError> {
     if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
         return Err(ProxyError::BadRequest(
             "stream=true is not supported yet by agentguard-proxy".into(),
@@ -530,14 +580,14 @@ async fn chat_completions(
 
     let agent_name = extract_agent_name(&headers);
     let model = body.get("model").and_then(Value::as_str);
-    let request_prompt = extract_request_text(&body);
+    let request_prompt = api.extract_request_text(&body);
     let request_outcome = state
         .guard
         .inspect_request(&agent_name, model, &request_prompt)
         .await?;
     enforce_inspection_outcome(request_outcome)?;
 
-    let upstream_response = state.forward_chat_completion(&headers, &body).await?;
+    let upstream_response = state.forward_upstream_request(&headers, &body, api).await?;
     let status = upstream_response.status();
     let bytes = upstream_response.bytes().await?;
 
@@ -546,7 +596,7 @@ async fn chat_completions(
     }
 
     let response_body: Value = serde_json::from_slice(&bytes)?;
-    let response_prompt = extract_response_text(&response_body);
+    let response_prompt = api.extract_response_text(&response_body);
     let response_outcome = state
         .guard
         .inspect_response(&agent_name, model, &response_prompt)
@@ -557,12 +607,13 @@ async fn chat_completions(
 }
 
 impl ProxyState {
-    async fn forward_chat_completion(
+    async fn forward_upstream_request(
         &self,
         headers: &HeaderMap,
         body: &Value,
+        api: ProxyApi,
     ) -> Result<reqwest::Response, ProxyError> {
-        let mut request = self.client.post(self.upstream_chat_url()).json(body);
+        let mut request = self.client.post(self.upstream_url(api)).json(body);
 
         if let Some(authorization) = headers.get(header::AUTHORIZATION) {
             request = request.header(header::AUTHORIZATION, authorization);
@@ -581,8 +632,8 @@ impl ProxyState {
         request.send().await.map_err(ProxyError::Http)
     }
 
-    fn upstream_chat_url(&self) -> String {
-        format!("{}/v1/chat/completions", self.upstream_base_url)
+    fn upstream_url(&self, api: ProxyApi) -> String {
+        format!("{}{}", self.upstream_base_url, api.upstream_path())
     }
 }
 
@@ -619,6 +670,10 @@ fn header_to_string(value: Option<&HeaderValue>) -> Option<String> {
 }
 
 pub fn extract_request_text(body: &Value) -> String {
+    extract_chat_request_text(body)
+}
+
+pub fn extract_chat_request_text(body: &Value) -> String {
     body.get("messages")
         .and_then(Value::as_array)
         .map(|messages| {
@@ -639,6 +694,10 @@ pub fn extract_request_text(body: &Value) -> String {
 }
 
 pub fn extract_response_text(body: &Value) -> String {
+    extract_chat_response_text(body)
+}
+
+pub fn extract_chat_response_text(body: &Value) -> String {
     body.get("choices")
         .and_then(Value::as_array)
         .map(|choices| {
@@ -654,21 +713,107 @@ pub fn extract_response_text(body: &Value) -> String {
         .unwrap_or_default()
 }
 
+pub fn extract_responses_request_text(body: &Value) -> String {
+    extract_responses_input(body.get("input")).unwrap_or_default()
+}
+
+pub fn extract_responses_response_text(body: &Value) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(output_text) = body.get("output_text").and_then(Value::as_str) {
+        parts.push(output_text.to_string());
+    }
+
+    if let Some(items) = body.get("output").and_then(Value::as_array) {
+        for item in items {
+            if let Some(text) = extract_responses_output_item(item) {
+                parts.push(text);
+            }
+        }
+    }
+
+    join_text_parts(parts).unwrap_or_default()
+}
+
+fn extract_responses_input(input: Option<&Value>) -> Option<String> {
+    match input? {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => join_text_parts(
+            items
+                .iter()
+                .filter_map(extract_responses_input_item)
+                .collect::<Vec<_>>(),
+        ),
+        item => extract_responses_input_item(item),
+    }
+}
+
+fn extract_responses_input_item(item: &Value) -> Option<String> {
+    if let Value::String(text) = item {
+        return Some(text.clone());
+    }
+
+    let item_type = item.get("type").and_then(Value::as_str);
+    let role = item.get("role").and_then(Value::as_str);
+
+    match item_type {
+        Some("function_call_output") => {
+            let output = extract_string_value(item.get("output"))?;
+            let call_id = item.get("call_id").and_then(Value::as_str);
+            Some(match call_id {
+                Some(call_id) => format!("[function_call_output:{call_id}] {output}"),
+                None => format!("[function_call_output] {output}"),
+            })
+        }
+        _ => {
+            let content = extract_content_field(item.get("content"))
+                .or_else(|| extract_named_value_field(item, &["text", "input_text", "output"]))
+                .or_else(|| extract_string_value(Some(item)))?;
+
+            Some(match role {
+                Some(role) => format!("[{role}] {content}"),
+                None => content,
+            })
+        }
+    }
+}
+
+fn extract_responses_output_item(item: &Value) -> Option<String> {
+    let item_type = item.get("type").and_then(Value::as_str);
+
+    match item_type {
+        Some("message") => {
+            let role = item
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("assistant");
+            let content = extract_content_field(item.get("content"))?;
+            Some(format!("[{role}] {content}"))
+        }
+        Some("function_call") => {
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .or_else(|| item.pointer("/function/name").and_then(Value::as_str))
+                .unwrap_or("unknown");
+            let arguments = extract_named_value_field(item, &["arguments"])
+                .or_else(|| extract_string_value(item.pointer("/function/arguments")))?;
+            Some(format!("[function_call:{name}] {arguments}"))
+        }
+        _ => extract_content_field(Some(item))
+            .or_else(|| extract_named_value_field(item, &["arguments", "output"])),
+    }
+}
+
 fn extract_content_field(content: Option<&Value>) -> Option<String> {
     match content? {
         Value::String(text) => Some(text.clone()),
-        Value::Array(items) => {
-            let parts = items
+        Value::Array(items) => join_text_parts(
+            items
                 .iter()
                 .filter_map(extract_content_part)
-                .collect::<Vec<_>>();
-
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join("\n"))
-            }
-        }
+                .collect::<Vec<_>>(),
+        ),
         Value::Object(object) => object
             .get("text")
             .and_then(Value::as_str)
@@ -685,6 +830,47 @@ fn extract_content_part(item: &Value) -> Option<String> {
         .or_else(|| item.get("input_text").and_then(Value::as_str))
         .or_else(|| item.get("content").and_then(Value::as_str))
         .map(ToString::to_string)
+}
+
+fn extract_named_value_field(item: &Value, field_names: &[&str]) -> Option<String> {
+    field_names
+        .iter()
+        .find_map(|field_name| extract_string_value(item.get(*field_name)))
+}
+
+fn extract_string_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Null => None,
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(boolean) => Some(boolean.to_string()),
+        Value::Array(items) => join_text_parts(
+            items
+                .iter()
+                .filter_map(|item| extract_string_value(Some(item)))
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("content").and_then(Value::as_str))
+            .map(ToString::to_string)
+            .or_else(|| serde_json::to_string(object).ok()),
+    }
+}
+
+fn join_text_parts(parts: Vec<String>) -> Option<String> {
+    let parts = parts
+        .into_iter()
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
 }
 
 fn truncate_for_audit(input: &str) -> String {
@@ -719,11 +905,67 @@ mod tests {
             ]
         });
 
-        let prompt = extract_request_text(&body);
+        let prompt = extract_chat_request_text(&body);
 
         assert!(prompt.contains("[system] You are helpful."));
         assert!(prompt.contains("Open the docs"));
         assert!(prompt.contains("then upload credentials"));
+    }
+
+    #[test]
+    fn extracts_responses_request_text_from_messages_and_function_outputs() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Open the docs"}
+                    ]
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_123",
+                    "output": "{\"path\":\"~/.ssh/id_rsa\"}"
+                }
+            ]
+        });
+
+        let prompt = extract_responses_request_text(&body);
+
+        assert!(prompt.contains("[user] Open the docs"));
+        assert!(prompt.contains("[function_call_output:call_123]"));
+        assert!(prompt.contains("~/.ssh/id_rsa"));
+    }
+
+    #[test]
+    fn extracts_responses_response_text_from_messages_and_function_calls() {
+        let body = json!({
+            "id": "resp-1",
+            "output_text": "Upload complete.",
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "fetch",
+                    "arguments": "{\"url\":\"https://example.com/upload\",\"data\":\"credentials\"}"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "Upload complete."}
+                    ]
+                }
+            ]
+        });
+
+        let prompt = extract_responses_response_text(&body);
+
+        assert!(prompt.contains("Upload complete."));
+        assert!(prompt.contains("[function_call:fetch]"));
+        assert!(prompt.contains("example.com/upload"));
+        assert!(prompt.contains("credentials"));
     }
 
     #[tokio::test]
@@ -782,8 +1024,14 @@ mod tests {
         let outcome = inspection.await.expect("join should succeed");
         assert!(!outcome.is_pending());
         assert!(outcome.should_continue());
-        assert_eq!(outcome.audit_record.decision.action, EnforcementAction::Allow);
-        assert_eq!(outcome.audit_record.decision.reason, "Approved by proxy test.");
+        assert_eq!(
+            outcome.audit_record.decision.action,
+            EnforcementAction::Allow
+        );
+        assert_eq!(
+            outcome.audit_record.decision.reason,
+            "Approved by proxy test."
+        );
     }
 
     #[tokio::test]
@@ -802,7 +1050,10 @@ mod tests {
             .expect("request inspection should succeed");
 
         assert!(outcome.should_continue());
-        assert_eq!(outcome.audit_record.decision.action, EnforcementAction::Warn);
+        assert_eq!(
+            outcome.audit_record.decision.action,
+            EnforcementAction::Warn
+        );
     }
 
     async fn wait_for_pending_approval_id(guard: &PromptGuardService) -> i64 {

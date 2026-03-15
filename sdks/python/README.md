@@ -44,6 +44,15 @@ PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_responses_agent.p
 
 This example talks directly to an OpenAI-compatible `/v1/responses` endpoint. Tool execution still goes through the local AgentGuard daemon, so desktop approvals and audit logging work the same way.
 
+To route the same Responses runner through the local proxy, point it at the proxy base URL:
+
+```bash
+PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_responses_agent.py \
+  "Read the project README and confirm when it is done." \
+  --responses-base-url http://127.0.0.1:8787 \
+  --daemon-base-url http://127.0.0.1:8790
+```
+
 ## Run tests
 
 ```bash
@@ -66,4 +75,10 @@ PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 
 
 ```bash
 PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_responses_agent_integration.py' -v
+```
+
+## Run the real daemon + proxy + Responses agent integration check
+
+```bash
+PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_responses_agent_proxy_integration.py' -v
 ```

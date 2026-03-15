@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .client import AgentGuardClient
+from .errors import AgentGuardHttpError
 from .types import GuardedResult
 from .wrappers import (
     DEFAULT_WAIT_FOR_APPROVAL_MS,
@@ -134,7 +135,7 @@ def chat_completion(
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8")
-        raise RuntimeError(f"chat completion request failed with {error.code}: {body}") from error
+        raise build_upstream_http_error(error.code, body) from error
 
     content = (
         payload.get("choices", [{}])[0]
@@ -160,6 +161,20 @@ def parse_agent_step(content: str) -> dict[str, Any]:
         raise ValueError(f"unsupported agent step type: {step_type}")
 
     return payload
+
+
+def build_upstream_http_error(status_code: int, body_text: str) -> Exception:
+    try:
+        details = json.loads(body_text)
+    except json.JSONDecodeError:
+        return RuntimeError(f"chat completion request failed with {status_code}: {body_text}")
+
+    error = details.get("error") if isinstance(details, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(message, str):
+        return AgentGuardHttpError(message=message, status=status_code, details=details)
+
+    return RuntimeError(f"chat completion request failed with {status_code}: {body_text}")
 
 
 def execute_tool_call(
