@@ -8,3 +8,4 @@ dist
 *.db-wal
 .playwright-cli
 apps/desktop/src-tauri/gen
+__pycache__/

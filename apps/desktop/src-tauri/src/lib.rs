@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentguard_models::{
-    ApprovalRequest, AuditRecord, EnforcementAction, Event, ResolveApprovalRequest,
+    ApprovalRequest, AuditRecord, EnforcementAction, Event, ResolveApprovalRequest, Rule,
 };
 use reqwest::Client;
 use serde::Serialize;
@@ -44,6 +44,7 @@ struct DashboardSnapshot {
     records: Vec<AuditRecord>,
     counts: RiskCounts,
     pending_approvals: Vec<ApprovalRequest>,
+    remembered_rules: Vec<Rule>,
 }
 
 #[derive(Clone, Copy)]
@@ -96,11 +97,22 @@ async fn load_dashboard_snapshot(
             Vec::new()
         }
     };
+    let remembered_rules = match fetch_policy_rules(&state, 20).await {
+        Ok(rules) => rules,
+        Err(error) => {
+            if status.healthy {
+                return Err(error);
+            }
+
+            Vec::new()
+        }
+    };
 
     Ok(DashboardSnapshot {
         counts: summarize_counts(&records),
         records,
         pending_approvals,
+        remembered_rules,
         status,
     })
 }
@@ -129,6 +141,14 @@ async fn resolve_approval_request(
     };
 
     post_approval_resolution(&state, approval_id, &resolution).await
+}
+
+#[tauri::command]
+async fn save_policy_rule(
+    state: tauri::State<'_, DesktopState>,
+    rule: Rule,
+) -> Result<Rule, String> {
+    post_policy_rule(&state, &rule).await
 }
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
@@ -213,6 +233,28 @@ async fn fetch_pending_approvals(
         .map_err(|error| format!("failed to decode approval queue: {error}"))
 }
 
+async fn fetch_policy_rules(state: &DesktopState, limit: usize) -> Result<Vec<Rule>, String> {
+    let url = format!("{}/v1/rules?limit={limit}", state.daemon_url);
+    let response = state
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch remembered rules: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "failed to fetch remembered rules: {}",
+            response.status()
+        ));
+    }
+
+    response
+        .json::<Vec<Rule>>()
+        .await
+        .map_err(|error| format!("failed to decode remembered rules: {error}"))
+}
+
 async fn post_event(state: &DesktopState, event: &Event) -> Result<AuditRecord, String> {
     let url = format!("{}/v1/events", state.daemon_url);
     let response = state
@@ -269,6 +311,33 @@ async fn post_approval_resolution(
         .json::<ApprovalRequest>()
         .await
         .map_err(|error| format!("failed to decode approval resolution response: {error}"))
+}
+
+async fn post_policy_rule(state: &DesktopState, rule: &Rule) -> Result<Rule, String> {
+    let url = format!("{}/v1/rules", state.daemon_url);
+    let response = state
+        .client
+        .post(url)
+        .json(rule)
+        .send()
+        .await
+        .map_err(|error| format!("failed to save policy rule: {error}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unable to decode daemon error body".into());
+        return Err(format!(
+            "daemon rejected the policy rule with {status}: {body}"
+        ));
+    }
+
+    response
+        .json::<Rule>()
+        .await
+        .map_err(|error| format!("failed to decode policy rule response: {error}"))
 }
 
 fn summarize_counts(records: &[AuditRecord]) -> RiskCounts {
@@ -427,7 +496,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_dashboard_snapshot,
             submit_sample_event,
-            resolve_approval_request
+            resolve_approval_request,
+            save_policy_rule
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentguard desktop application");

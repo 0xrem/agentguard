@@ -8,9 +8,9 @@ use std::{
 
 use agentguard_models::{
     ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction,
-    EvaluateEventRequest, EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest,
+    EvaluateEventRequest, EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest, Rule,
 };
-use agentguard_policy::PolicyEngine;
+use agentguard_policy::{PolicyEngine, default_rules};
 use agentguard_store::{AuditStore, StoreError};
 use axum::{
     Json, Router,
@@ -58,21 +58,24 @@ impl From<StoreError> for DaemonError {
 pub type Result<T> = std::result::Result<T, DaemonError>;
 
 pub struct AgentGuardDaemon {
-    policy: PolicyEngine,
+    default_rules: Vec<Rule>,
     store: AuditStore,
 }
 
 impl AgentGuardDaemon {
-    pub fn new(policy: PolicyEngine, store: AuditStore) -> Self {
-        Self { policy, store }
+    pub fn new(default_rules: Vec<Rule>, store: AuditStore) -> Self {
+        Self {
+            default_rules,
+            store,
+        }
     }
 
     pub fn with_mvp_defaults(store: AuditStore) -> Self {
-        Self::new(PolicyEngine::mvp_defaults(), store)
+        Self::new(default_rules(), store)
     }
 
     pub fn rule_count(&self) -> usize {
-        self.policy.rules().len()
+        self.default_rules.len()
     }
 
     pub fn process_event(&self, event: Event) -> Result<AuditRecord> {
@@ -106,6 +109,14 @@ impl AgentGuardDaemon {
         self.store
             .get_approval_request(approval_id)
             .map_err(Into::into)
+    }
+
+    pub fn list_rules(&self) -> Result<Vec<Rule>> {
+        self.store.list_rules().map_err(Into::into)
+    }
+
+    pub fn save_rule(&self, rule: Rule) -> Result<Rule> {
+        self.store.save_rule(&rule).map_err(Into::into)
     }
 
     pub fn resolve_approval_request(
@@ -149,7 +160,7 @@ impl AgentGuardDaemon {
     }
 
     fn record_evaluation(&self, event: Event) -> Result<(AuditRecord, Option<ApprovalRequest>)> {
-        let decision = self.policy.decide(&event);
+        let decision = self.active_policy()?.decide(&event);
         let record = self.store.record_event(&event, &decision)?;
         let approval_request = if decision.action == EnforcementAction::Ask {
             Some(self.store.create_approval_request(&record)?)
@@ -158,6 +169,16 @@ impl AgentGuardDaemon {
         };
 
         Ok((record, approval_request))
+    }
+
+    fn active_policy(&self) -> Result<PolicyEngine> {
+        let custom_rules = self.store.list_rules()?;
+        Ok(PolicyEngine::new(
+            custom_rules
+                .into_iter()
+                .chain(self.default_rules.iter().cloned())
+                .collect(),
+        ))
     }
 }
 
@@ -317,6 +338,11 @@ struct ApprovalListQuery {
     status: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct RuleListQuery {
+    limit: Option<usize>,
+}
+
 pub fn app(daemon: AgentGuardDaemon) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -324,6 +350,7 @@ pub fn app(daemon: AgentGuardDaemon) -> Router {
         .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
         .route("/v1/approvals", get(list_approval_requests))
+        .route("/v1/rules", get(list_rules).post(create_rule))
         .route(
             "/v1/approvals/{approval_id}/resolve",
             post(resolve_approval_request),
@@ -427,6 +454,23 @@ async fn list_approval_requests(
     Ok(Json(approvals))
 }
 
+async fn list_rules(
+    State(state): State<ApiState>,
+    Query(query): Query<RuleListQuery>,
+) -> std::result::Result<Json<Vec<Rule>>, DaemonApiError> {
+    let limit = query.limit.unwrap_or(250).min(500);
+    let rules = state.daemon.lock().map_err(lock_error)?.list_rules()?;
+    Ok(Json(rules.into_iter().take(limit).collect()))
+}
+
+async fn create_rule(
+    State(state): State<ApiState>,
+    Json(rule): Json<Rule>,
+) -> std::result::Result<Json<Rule>, DaemonApiError> {
+    let rule = state.daemon.lock().map_err(lock_error)?.save_rule(rule)?;
+    Ok(Json(rule))
+}
+
 async fn resolve_approval_request(
     State(state): State<ApiState>,
     Path(approval_id): Path<i64>,
@@ -507,8 +551,8 @@ mod tests {
     use tower::ServiceExt;
 
     use agentguard_models::{
-        AgentIdentity, EnforcementAction, EvaluateEventRequest, EvaluationStatus, Layer, Operation,
-        ResourceTarget,
+        AgentIdentity, EnforcementAction, EvaluateEventRequest, EvaluationStatus, Layer,
+        MatchPattern, Operation, ResourceTarget, Rule,
     };
     use agentguard_store::AuditStore;
 
@@ -704,6 +748,93 @@ mod tests {
             serde_json::from_slice(&recent_body).expect("records should decode");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0], record);
+    }
+
+    #[tokio::test]
+    async fn api_saves_custom_rules_and_uses_them_for_future_events() {
+        let daemon = AgentGuardDaemon::with_mvp_defaults(
+            AuditStore::open_in_memory().expect("store should initialize"),
+        );
+        let app = app(daemon);
+        let rule = Rule::new(
+            "remembered-review-upload",
+            EnforcementAction::Allow,
+            "Remembered operator approval for this upload target.",
+        )
+        .with_priority(875)
+        .for_layer(Layer::Tool)
+        .for_operation(Operation::HttpRequest)
+        .for_agent(MatchPattern::Exact("Desktop Scenario Runner".into()))
+        .for_target(MatchPattern::Exact("api.unknown-upload.example".into()));
+
+        let create_rule_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/rules")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&rule).expect("rule should serialize"),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("rule request should succeed");
+        assert_eq!(create_rule_response.status(), StatusCode::OK);
+
+        let evaluation_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/evaluate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&EvaluateEventRequest {
+                            event: upload_event(),
+                            wait_for_approval_ms: Some(0),
+                        })
+                        .expect("evaluation request should serialize"),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(evaluation_response.status(), StatusCode::OK);
+
+        let evaluation_body = to_bytes(evaluation_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let outcome: EvaluationOutcome =
+            serde_json::from_slice(&evaluation_body).expect("evaluation outcome should decode");
+        assert_eq!(outcome.status, EvaluationStatus::Completed);
+        assert_eq!(
+            outcome.audit_record.decision.action,
+            EnforcementAction::Allow
+        );
+        assert_eq!(
+            outcome.audit_record.decision.matched_rule_id.as_deref(),
+            Some("remembered-review-upload")
+        );
+
+        let rules_response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/rules?limit=10")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+        assert_eq!(rules_response.status(), StatusCode::OK);
+
+        let rules_body = to_bytes(rules_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let rules: Vec<Rule> = serde_json::from_slice(&rules_body).expect("rules should decode");
+        assert_eq!(rules, vec![rule]);
     }
 
     fn upload_event() -> Event {

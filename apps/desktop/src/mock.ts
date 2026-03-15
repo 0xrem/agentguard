@@ -4,6 +4,7 @@ import type {
   AuditRecord,
   DashboardSnapshot,
   EnforcementAction,
+  PolicyRule,
   SampleEventKind,
 } from "./types";
 
@@ -101,6 +102,25 @@ const previewRecords: AuditRecord[] = [
 ];
 
 const previewPendingApprovals: ApprovalRequest[] = [];
+const previewRememberedRules: PolicyRule[] = [
+  {
+    id: "remembered-preview-review-upload",
+    priority: 875,
+    layer: "tool",
+    operation: "http_request",
+    agent: {
+      type: "exact",
+      value: "Preview AutoGPT",
+    },
+    target: {
+      type: "exact",
+      value: "api.review.internal",
+    },
+    minimum_risk: "high",
+    action: "allow",
+    reason: "Remembered operator approval for the internal review upload service.",
+  },
+];
 
 export function mockDashboard(limit = 25): DashboardSnapshot {
   const records = previewRecords.slice(0, limit);
@@ -116,6 +136,7 @@ export function mockDashboard(limit = 25): DashboardSnapshot {
     counts: summarize(records),
     records,
     pending_approvals: previewPendingApprovals.slice(0, 10),
+    remembered_rules: previewRememberedRules.slice(0, 20),
   };
 }
 
@@ -178,6 +199,17 @@ export function mockResolveApprovalRequest(
   previewPendingApprovals.splice(pendingIndex, 1);
 
   return { ...approval };
+}
+
+export function mockSavePolicyRule(rule: PolicyRule): PolicyRule {
+  const existingIndex = previewRememberedRules.findIndex((item) => item.id === rule.id);
+  if (existingIndex >= 0) {
+    previewRememberedRules[existingIndex] = rule;
+  } else {
+    previewRememberedRules.unshift(rule);
+  }
+
+  return rule;
 }
 
 function sampleRecord(kind: SampleEventKind, timestamp: number): AuditRecord {

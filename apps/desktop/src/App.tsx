@@ -1,10 +1,16 @@
 import { startTransition, useEffect, useMemo, useState } from "react";
-import { loadDashboard, resolveApprovalRequest, submitSampleEvent } from "./api";
+import {
+  loadDashboard,
+  resolveApprovalRequest,
+  savePolicyRule,
+  submitSampleEvent,
+} from "./api";
 import type {
   ApprovalRequest,
   AuditRecord,
   DashboardSnapshot,
   EnforcementAction,
+  PolicyRule,
   RiskCounts,
   SampleEventKind,
 } from "./types";
@@ -73,6 +79,7 @@ export default function App() {
   const [lastRecord, setLastRecord] = useState<AuditRecord | null>(null);
   const [activeApprovalId, setActiveApprovalId] = useState<number | null>(null);
   const [resolutionNote, setResolutionNote] = useState("");
+  const [rememberDecision, setRememberDecision] = useState(false);
   const [resolvingAction, setResolvingAction] = useState<Exclude<EnforcementAction, "ask"> | null>(
     null,
   );
@@ -106,6 +113,7 @@ export default function App() {
 
   useEffect(() => {
     setResolutionNote("");
+    setRememberDecision(false);
   }, [activeApprovalId]);
 
   async function refreshDashboard(initial: boolean) {
@@ -151,14 +159,28 @@ export default function App() {
 
     setResolvingAction(action);
     try {
+      const note = resolutionNote.trim() || null;
       const resolved = await resolveApprovalRequest(
         activeApproval.id,
         action,
-        resolutionNote.trim() || null,
+        note,
       );
       setLastRecord(resolved.audit_record);
-      setError(null);
+      let nextError: string | null = null;
+
+      if (rememberDecision) {
+        const rememberedRule = buildRememberedRule(resolved, action, note);
+        if (rememberedRule) {
+          try {
+            await savePolicyRule(rememberedRule);
+          } catch (ruleError) {
+            nextError = `Decision saved, but remembering the rule failed: ${getErrorMessage(ruleError)}`;
+          }
+        }
+      }
+
       await refreshDashboard(false);
+      setError(nextError);
     } catch (resolveError) {
       setError(getErrorMessage(resolveError));
     } finally {
@@ -190,6 +212,10 @@ export default function App() {
     (scenario) => scenario.kind === selectedScenario,
   );
   const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
+  const rememberedRules = snapshot?.remembered_rules ?? [];
+  const rememberableDecision = activeApproval
+    ? buildRememberedRule(activeApproval, "allow", resolutionNote.trim() || null) !== null
+    : false;
 
   return (
     <div className="app-shell">
@@ -406,11 +432,49 @@ export default function App() {
             </ul>
             <div className="guidance-callout">
               <span>Current objective</span>
-              <strong>Make approvals feel instant</strong>
+              <strong>Teach the firewall as you go</strong>
               <p>
-                This build proves the approval queue, modal, and audit reconciliation are all wired
-                through one local control plane.
+                We now use operator decisions to build local rules, so repeated safe actions can
+                stop coming back for the same review.
               </p>
+            </div>
+            <div className="remembered-rules-section">
+              <div className="section-heading section-heading-compact">
+                <p className="eyebrow">Remembered rules</p>
+                <h2>What the daemon has learned locally</h2>
+              </div>
+              {rememberedRules.length > 0 ? (
+                <div className="remembered-rule-list">
+                  {rememberedRules.map((rule) => (
+                    <article key={rule.id} className="remembered-rule-card">
+                      <div className="remembered-rule-header">
+                        <span className={`decision-chip ${rule.action}`}>{rule.action}</span>
+                        <span className="rule-priority">priority {rule.priority}</span>
+                      </div>
+                      <strong>{rule.reason}</strong>
+                      <dl className="remembered-rule-details">
+                        <div>
+                          <dt>Agent</dt>
+                          <dd>{formatMatchPattern(rule.agent)}</dd>
+                        </div>
+                        <div>
+                          <dt>Operation</dt>
+                          <dd>{rule.operation ?? "any"}</dd>
+                        </div>
+                        <div>
+                          <dt>Target</dt>
+                          <dd>{formatMatchPattern(rule.target)}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">
+                  No remembered rules yet. Approve or deny a repeated action and opt in to save it
+                  as a local rule.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -468,6 +532,24 @@ export default function App() {
                 onChange={(event) => setResolutionNote(event.target.value)}
               />
             </label>
+
+            {rememberableDecision ? (
+              <label className="remember-toggle">
+                <input
+                  type="checkbox"
+                  checked={rememberDecision}
+                  onChange={(event) => setRememberDecision(event.target.checked)}
+                  disabled={resolvingAction !== null}
+                />
+                <div>
+                  <strong>Remember this decision as a local rule</strong>
+                  <span>
+                    Save a per-agent, per-target rule so the same action does not need manual
+                    approval next time.
+                  </span>
+                </div>
+              </label>
+            ) : null}
 
             <div className="approval-actions">
               <button
@@ -529,6 +611,84 @@ function formatTarget(target: AuditRecord["event"]["target"]): string {
   }
 
   return "none";
+}
+
+function buildRememberedRule(
+  approval: ApprovalRequest,
+  action: Exclude<EnforcementAction, "ask">,
+  note: string | null,
+): PolicyRule | null {
+  if ((action !== "allow" && action !== "block") || approval.audit_record.event.target.kind === "none") {
+    return null;
+  }
+
+  const targetValue = approval.audit_record.event.target.value;
+  if (!targetValue) {
+    return null;
+  }
+
+  return {
+    id: createRememberedRuleId(approval, action),
+    priority: 875,
+    layer: approval.audit_record.event.layer,
+    operation: approval.audit_record.event.operation,
+    agent: {
+      type: "exact",
+      value: approval.audit_record.event.agent.name,
+    },
+    target: {
+      type: "exact",
+      value: targetValue,
+    },
+    minimum_risk: approval.audit_record.decision.risk,
+    action,
+    reason: note ?? defaultRememberedRuleReason(approval, action),
+  };
+}
+
+function createRememberedRuleId(
+  approval: ApprovalRequest,
+  action: "allow" | "block",
+): string {
+  const fingerprint = [
+    approval.audit_record.event.agent.name,
+    approval.audit_record.event.layer,
+    approval.audit_record.event.operation,
+    formatTarget(approval.audit_record.event.target),
+    action,
+  ].join("|");
+
+  let hash = 0;
+  for (let index = 0; index < fingerprint.length; index += 1) {
+    hash = (hash * 31 + fingerprint.charCodeAt(index)) >>> 0;
+  }
+
+  return `remembered-${action}-${hash.toString(16)}`;
+}
+
+function defaultRememberedRuleReason(
+  approval: ApprovalRequest,
+  action: "allow" | "block",
+): string {
+  return action === "allow"
+    ? `Remembered operator approval for ${approval.audit_record.event.agent.name} on ${formatTarget(approval.audit_record.event.target)}.`
+    : `Remembered operator deny rule for ${approval.audit_record.event.agent.name} on ${formatTarget(approval.audit_record.event.target)}.`;
+}
+
+function formatMatchPattern(pattern: PolicyRule["agent"]): string {
+  switch (pattern.type) {
+    case "any":
+      return "any";
+    case "exact":
+    case "prefix":
+    case "contains":
+    case "contains_insensitive":
+      return pattern.value;
+    case "one_of":
+      return pattern.value.join(", ");
+    default:
+      return "any";
+  }
 }
 
 function getErrorMessage(error: unknown): string {

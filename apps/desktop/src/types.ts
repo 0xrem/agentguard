@@ -10,6 +10,14 @@ export interface AgentIdentity {
   trust: "trusted" | "unknown" | "high_risk";
 }
 
+export type MatchPattern =
+  | { type: "any" }
+  | { type: "exact"; value: string }
+  | { type: "prefix"; value: string }
+  | { type: "contains"; value: string }
+  | { type: "contains_insensitive"; value: string }
+  | { type: "one_of"; value: string[] };
+
 export type ResourceTarget =
   | { kind: "path"; value: string }
   | { kind: "command"; value: string }
@@ -41,6 +49,18 @@ export interface Decision {
   risk: RiskLevel;
   reason: string;
   matched_rule_id: string | null;
+}
+
+export interface PolicyRule {
+  id: string;
+  priority: number;
+  layer: Event["layer"] | null;
+  operation: Event["operation"] | null;
+  agent: MatchPattern;
+  target: MatchPattern;
+  minimum_risk: RiskLevel | null;
+  action: EnforcementAction;
+  reason: string;
 }
 
 export interface AuditRecord {
@@ -87,6 +107,7 @@ export interface DashboardSnapshot {
   records: AuditRecord[];
   counts: RiskCounts;
   pending_approvals: ApprovalRequest[];
+  remembered_rules: PolicyRule[];
 }
 
 export type SampleEventKind =

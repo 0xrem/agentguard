@@ -6,7 +6,7 @@ use std::{
 };
 
 use agentguard_models::{
-    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, Event,
+    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, Event, Rule,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS approval_requests (
 
 CREATE INDEX IF NOT EXISTS idx_approval_requests_status_created
 ON approval_requests(status, created_at_unix_ms DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS policy_rules (
+    id TEXT PRIMARY KEY,
+    created_at_unix_ms INTEGER NOT NULL,
+    rule_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_rules_created
+ON policy_rules(created_at_unix_ms DESC, id DESC);
 "#;
 
 const APPROVAL_REQUEST_COLUMNS: &str = r#"
@@ -424,6 +433,54 @@ impl AuditStore {
             .map_err(StoreError::from)
     }
 
+    pub fn save_rule(&self, rule: &Rule) -> Result<Rule> {
+        if rule.id.trim().is_empty() {
+            return Err(StoreError::InvalidInput(
+                "policy rule id cannot be empty".into(),
+            ));
+        }
+
+        if rule.reason.trim().is_empty() {
+            return Err(StoreError::InvalidInput(
+                "policy rule reason cannot be empty".into(),
+            ));
+        }
+
+        let created_at_unix_ms = unix_timestamp_ms()?;
+        let rule_json = serde_json::to_string(rule)?;
+
+        self.connection.execute(
+            r#"
+            INSERT INTO policy_rules (id, created_at_unix_ms, rule_json)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(id) DO UPDATE SET
+                created_at_unix_ms = excluded.created_at_unix_ms,
+                rule_json = excluded.rule_json
+            "#,
+            params![rule.id.as_str(), created_at_unix_ms, rule_json],
+        )?;
+
+        Ok(rule.clone())
+    }
+
+    pub fn list_rules(&self) -> Result<Vec<Rule>> {
+        let mut statement = self.connection.prepare(
+            r#"
+            SELECT rule_json
+            FROM policy_rules
+            ORDER BY created_at_unix_ms DESC, id DESC
+            "#,
+        )?;
+
+        let rows = statement.query_map([], |row| {
+            let rule_json: String = row.get(0)?;
+            serde_json::from_str::<Rule>(&rule_json).map_err(json_decode_error)
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
     pub fn record_count(&self) -> Result<i64> {
         self.connection
             .query_row("SELECT COUNT(*) FROM audit_records", [], |row| row.get(0))
@@ -506,8 +563,8 @@ fn unix_timestamp_ms() -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use agentguard_models::{
-        AgentIdentity, ApprovalStatus, EnforcementAction, Layer, Operation, ResourceTarget,
-        RiskLevel,
+        AgentIdentity, ApprovalStatus, EnforcementAction, Layer, MatchPattern, Operation,
+        ResourceTarget, RiskLevel,
     };
 
     use super::*;
@@ -643,5 +700,28 @@ mod tests {
             pending[0].audit_record.event.target.as_str(),
             Some("pending.example")
         );
+    }
+
+    #[test]
+    fn saves_and_lists_policy_rules() {
+        let store = AuditStore::open_in_memory().expect("in-memory store should initialize");
+        let rule = Rule::new(
+            "remembered-auto-gpt-upload",
+            EnforcementAction::Allow,
+            "Remember operator approval for uploads to the review service.",
+        )
+        .with_priority(875)
+        .for_layer(Layer::Tool)
+        .for_operation(Operation::HttpRequest)
+        .for_agent(MatchPattern::Exact("AutoGPT".into()))
+        .for_target(MatchPattern::Exact("api.review.example".into()))
+        .requiring_risk_at_least(RiskLevel::High);
+
+        store.save_rule(&rule).expect("rule should persist");
+
+        let rules = store.list_rules().expect("rules should load");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0], rule);
     }
 }

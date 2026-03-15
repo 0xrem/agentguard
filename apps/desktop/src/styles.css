@@ -549,6 +549,69 @@ textarea {
   color: rgba(247, 243, 237, 0.76);
 }
 
+.remembered-rules-section {
+  margin-top: 22px;
+}
+
+.section-heading-compact {
+  margin-bottom: 14px;
+}
+
+.section-heading-compact h2 {
+  font-size: 1.45rem;
+}
+
+.remembered-rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.remembered-rule-card {
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.remembered-rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rule-priority {
+  font-size: 0.78rem;
+  color: #6f7c8c;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.remembered-rule-card strong {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.remembered-rule-details {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.remembered-rule-details dt {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #8d9aab;
+}
+
+.remembered-rule-details dd {
+  margin: 6px 0 0;
+  color: #1f2d3d;
+  overflow-wrap: anywhere;
+}
+
 .empty-state {
   margin: 0;
   padding: 22px;
@@ -657,6 +720,35 @@ textarea {
   color: #1f2d3d;
 }
 
+.remember-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.remember-toggle input {
+  margin-top: 2px;
+  width: 18px;
+  height: 18px;
+  accent-color: #1a3a4b;
+}
+
+.remember-toggle strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.remember-toggle span {
+  color: #506175;
+  line-height: 1.5;
+}
+
 .approval-actions {
   display: flex;
   justify-content: flex-end;
@@ -730,6 +822,10 @@ textarea {
   .approval-modal-header,
   .approval-actions {
     flex-direction: column;
+  }
+
+  .remember-toggle {
+    grid-template-columns: 1fr;
   }
 
   .approval-actions .button {
