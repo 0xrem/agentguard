@@ -2,6 +2,8 @@ export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type Layer = "prompt" | "tool" | "command";
 export type TrustLevel = "trusted" | "unknown" | "high_risk";
 export type EnforcementAction = "allow" | "warn" | "ask" | "block" | "kill";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "killed" | "expired";
+export type EvaluationStatus = "completed" | "pending_approval";
 export type Operation =
   | "read_file"
   | "write_file"
@@ -52,6 +54,24 @@ export interface AuditRecord {
   decision: Decision;
 }
 
+export interface ApprovalRequest {
+  id: number;
+  created_at_unix_ms: number;
+  resolved_at_unix_ms: number | null;
+  status: ApprovalStatus;
+  audit_record: AuditRecord;
+  requested_decision: Decision;
+  resolved_decision: Decision | null;
+  decided_by: string | null;
+  resolution_note: string | null;
+}
+
+export interface EvaluationOutcome {
+  status: EvaluationStatus;
+  audit_record: AuditRecord;
+  approval_request: ApprovalRequest | null;
+}
+
 export type AgentLike =
   | string
   | {
@@ -69,10 +89,10 @@ export interface GuardEventInput {
   metadata?: Record<string, string>;
   riskHint?: RiskLevel | null;
   agent?: AgentLike;
+  waitForApprovalMs?: number;
 }
 
 export interface GuardedResult<T> {
   auditRecord: AuditRecord;
   value: T;
 }
-

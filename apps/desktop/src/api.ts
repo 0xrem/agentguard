@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { mockDashboard, mockSubmitSampleEvent } from "./mock";
-import type { AuditRecord, DashboardSnapshot, SampleEventKind } from "./types";
+import { mockDashboard, mockResolveApprovalRequest, mockSubmitSampleEvent } from "./mock";
+import type {
+  ApprovalRequest,
+  AuditRecord,
+  DashboardSnapshot,
+  EnforcementAction,
+  SampleEventKind,
+} from "./types";
 
 export async function loadDashboard(limit = 25): Promise<DashboardSnapshot> {
   if (!isTauriRuntime()) {
@@ -16,6 +22,22 @@ export async function submitSampleEvent(kind: SampleEventKind): Promise<AuditRec
   }
 
   return invoke<AuditRecord>("submit_sample_event", { kind });
+}
+
+export async function resolveApprovalRequest(
+  approvalId: number,
+  action: Exclude<EnforcementAction, "ask">,
+  reason: string | null,
+): Promise<ApprovalRequest> {
+  if (!isTauriRuntime()) {
+    return mockResolveApprovalRequest(approvalId, action, reason);
+  }
+
+  return invoke<ApprovalRequest>("resolve_approval_request", {
+    approvalId,
+    action,
+    reason,
+  });
 }
 
 function isTauriRuntime(): boolean {

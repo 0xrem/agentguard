@@ -1,5 +1,6 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type EnforcementAction = "allow" | "warn" | "ask" | "block" | "kill";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "killed" | "expired";
 
 export interface AgentIdentity {
   name: string;
@@ -49,6 +50,18 @@ export interface AuditRecord {
   decision: Decision;
 }
 
+export interface ApprovalRequest {
+  id: number;
+  created_at_unix_ms: number;
+  resolved_at_unix_ms: number | null;
+  status: ApprovalStatus;
+  audit_record: AuditRecord;
+  requested_decision: Decision;
+  resolved_decision: Decision | null;
+  decided_by: string | null;
+  resolution_note: string | null;
+}
+
 export interface DaemonStatus {
   daemon_url: string;
   healthy: boolean;
@@ -73,9 +86,11 @@ export interface DashboardSnapshot {
   status: DaemonStatus;
   records: AuditRecord[];
   counts: RiskCounts;
+  pending_approvals: ApprovalRequest[];
 }
 
 export type SampleEventKind =
+  | "review_upload"
   | "safe_read"
   | "blocked_command"
   | "prompt_injection"

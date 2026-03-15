@@ -81,7 +81,8 @@ textarea {
 .hero-copy h1,
 .section-heading h2,
 .timeline-content h3,
-.scenario-footer h3 {
+.scenario-footer h3,
+.approval-modal-header h2 {
   margin: 0;
   font-family: "Iowan Old Style", "Palatino Linotype", serif;
   letter-spacing: -0.03em;
@@ -194,6 +195,17 @@ textarea {
   color: #fffaf4;
 }
 
+.button-ghost {
+  background: rgba(255, 255, 255, 0.76);
+  color: #274052;
+  border: 1px solid rgba(24, 35, 50, 0.1);
+}
+
+.button-danger {
+  background: rgba(183, 62, 40, 0.9);
+  color: #fff8f4;
+}
+
 .banner {
   display: flex;
   flex-wrap: wrap;
@@ -246,6 +258,7 @@ textarea {
 .risk-card,
 .action-card,
 .scenario-card,
+.approval-card,
 .last-record,
 .guidance-callout {
   border-radius: 22px;
@@ -326,6 +339,52 @@ textarea {
   display: block;
   font-size: 1.06rem;
   margin-bottom: 8px;
+}
+
+.approval-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.approval-card {
+  width: 100%;
+  padding: 16px 18px;
+  text-align: left;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.72);
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.approval-card:hover,
+.approval-card.selected {
+  border-color: rgba(26, 58, 75, 0.3);
+  transform: translateY(-1px);
+}
+
+.approval-card.selected {
+  background: rgba(239, 247, 248, 0.92);
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.approval-card strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.approval-card span:last-child {
+  color: #1f2d3d;
 }
 
 .scenario-footer {
@@ -497,6 +556,114 @@ textarea {
   background: rgba(255, 255, 255, 0.68);
 }
 
+.approval-modal-scrim {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 35, 50, 0.28);
+  backdrop-filter: blur(14px);
+  z-index: 10;
+}
+
+.approval-modal {
+  width: min(680px, 100%);
+  padding: 28px;
+  animation: rise 220ms ease-out;
+}
+
+.approval-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.approval-modal-header h2 {
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  line-height: 1.02;
+}
+
+.approval-modal-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-modal-copy {
+  margin: 18px 0 0;
+  color: #506175;
+  line-height: 1.6;
+}
+
+.approval-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 0;
+}
+
+.approval-facts div,
+.approval-metadata-row {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(24, 35, 50, 0.08);
+}
+
+.approval-facts dt,
+.approval-metadata-row span,
+.approval-note-field span {
+  display: block;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #8d9aab;
+}
+
+.approval-facts dd {
+  margin: 8px 0 0;
+  color: #1f2d3d;
+  overflow-wrap: anywhere;
+}
+
+.approval-metadata {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.approval-metadata-row strong {
+  display: block;
+  margin-top: 8px;
+  color: #1f2d3d;
+  overflow-wrap: anywhere;
+}
+
+.approval-note-field {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.approval-note-field textarea {
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #1f2d3d;
+}
+
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -527,6 +694,10 @@ textarea {
   .timeline-details {
     grid-template-columns: 1fr;
   }
+
+  .approval-facts {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -551,5 +722,17 @@ textarea {
   .hero-copy h1 {
     font-size: 2.6rem;
   }
-}
 
+  .approval-modal {
+    padding: 22px;
+  }
+
+  .approval-modal-header,
+  .approval-actions {
+    flex-direction: column;
+  }
+
+  .approval-actions .button {
+    width: 100%;
+  }
+}

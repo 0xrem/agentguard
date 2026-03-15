@@ -116,6 +116,29 @@ impl EnforcementAction {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    #[default]
+    Pending,
+    Approved,
+    Denied,
+    Killed,
+    Expired,
+}
+
+impl ApprovalStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Killed => "killed",
+            Self::Expired => "expired",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AgentIdentity {
     pub name: String,
@@ -375,6 +398,64 @@ pub struct AuditRecord {
     pub recorded_at_unix_ms: i64,
     pub event: Event,
     pub decision: Decision,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ApprovalRequest {
+    pub id: i64,
+    pub created_at_unix_ms: i64,
+    pub resolved_at_unix_ms: Option<i64>,
+    pub status: ApprovalStatus,
+    pub audit_record: AuditRecord,
+    pub requested_decision: Decision,
+    pub resolved_decision: Option<Decision>,
+    pub decided_by: Option<String>,
+    pub resolution_note: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationStatus {
+    Completed,
+    PendingApproval,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvaluationOutcome {
+    pub status: EvaluationStatus,
+    pub audit_record: AuditRecord,
+    pub approval_request: Option<ApprovalRequest>,
+}
+
+impl EvaluationOutcome {
+    pub fn completed(audit_record: AuditRecord) -> Self {
+        Self {
+            status: EvaluationStatus::Completed,
+            audit_record,
+            approval_request: None,
+        }
+    }
+
+    pub fn pending(audit_record: AuditRecord, approval_request: ApprovalRequest) -> Self {
+        Self {
+            status: EvaluationStatus::PendingApproval,
+            audit_record,
+            approval_request: Some(approval_request),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvaluateEventRequest {
+    pub event: Event,
+    pub wait_for_approval_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ResolveApprovalRequest {
+    pub action: EnforcementAction,
+    pub decided_by: String,
+    pub reason: Option<String>,
 }
 
 #[cfg(test)]

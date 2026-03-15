@@ -1,8 +1,9 @@
-import { AgentGuardHttpError, PolicyDeniedError } from "./errors.js";
+import { AgentGuardHttpError, PendingApprovalError, PolicyDeniedError } from "./errors.js";
 import type {
   AgentIdentity,
   AgentLike,
   AuditRecord,
+  EvaluationOutcome,
   Event,
   GuardEventInput,
   ResourceTarget,
@@ -40,6 +41,17 @@ export class AgentGuardClient {
     });
   }
 
+  async evaluateEvent(input: GuardEventInput): Promise<EvaluationOutcome> {
+    return this.request<EvaluationOutcome>("/v1/evaluate", {
+      method: "POST",
+      body: JSON.stringify({
+        event: this.buildEvent(input),
+        wait_for_approval_ms:
+          typeof input.waitForApprovalMs === "number" ? input.waitForApprovalMs : null,
+      }),
+    });
+  }
+
   async listAudit(limit = 25): Promise<AuditRecord[]> {
     const safeLimit = Math.max(1, Math.min(limit, 500));
     return this.request<AuditRecord[]>(`/v1/audit?limit=${safeLimit}`);
@@ -57,13 +69,17 @@ export class AgentGuardClient {
   }
 
   async guardEvent(input: GuardEventInput): Promise<AuditRecord> {
-    const record = await this.recordEvent(this.buildEvent(input));
+    const outcome = await this.evaluateEvent(input);
 
-    if (shouldDeny(record.decision.action)) {
-      throw new PolicyDeniedError(record);
+    if (outcome.status === "pending_approval") {
+      throw new PendingApprovalError(outcome);
     }
 
-    return record;
+    if (shouldDeny(outcome.audit_record.decision.action)) {
+      throw new PolicyDeniedError(outcome.audit_record);
+    }
+
+    return outcome.audit_record;
   }
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -180,4 +196,3 @@ async function buildHttpError(response: Response): Promise<AgentGuardHttpError> 
 }
 
 export type { RiskLevel };
-

@@ -1,10 +1,11 @@
 import { startTransition, useEffect, useMemo, useState } from "react";
-import { loadDashboard, submitSampleEvent } from "./api";
+import { loadDashboard, resolveApprovalRequest, submitSampleEvent } from "./api";
 import type {
+  ApprovalRequest,
   AuditRecord,
   DashboardSnapshot,
+  EnforcementAction,
   RiskCounts,
-  RiskLevel,
   SampleEventKind,
 } from "./types";
 
@@ -15,6 +16,13 @@ const SAMPLE_SCENARIOS: Array<{
   description: string;
 }> = [
   {
+    kind: "review_upload",
+    eyebrow: "Approval flow",
+    title: "Queue a high-risk upload for approval",
+    description:
+      "Creates an outbound upload event that must be approved from the desktop modal before it can proceed.",
+  },
+  {
     kind: "blocked_command",
     eyebrow: "Critical command",
     title: "Block a destructive shell action",
@@ -24,19 +32,22 @@ const SAMPLE_SCENARIOS: Array<{
     kind: "sensitive_secret_read",
     eyebrow: "Credential path",
     title: "Probe a secret read",
-    description: "Attempts to read `~/.ssh/id_rsa` to confirm sensitive path protection stays locked down.",
+    description:
+      "Attempts to read `~/.ssh/id_rsa` to confirm sensitive path protection stays locked down.",
   },
   {
     kind: "prompt_injection",
     eyebrow: "Prompt guard",
     title: "Inject a suspicious instruction",
-    description: "Submits a prompt with `ignore previous instructions` to demonstrate warning-level prompt review.",
+    description:
+      "Submits a prompt with `ignore previous instructions` to demonstrate warning-level prompt review.",
   },
   {
     kind: "safe_read",
     eyebrow: "Happy path",
     title: "Record a normal workspace read",
-    description: "Shows what a low-risk event looks like when an assistant touches an approved project file.",
+    description:
+      "Shows what a low-risk event looks like when an assistant touches an approved project file.",
   },
 ];
 
@@ -57,9 +68,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedScenario, setSelectedScenario] = useState<SampleEventKind>("blocked_command");
+  const [selectedScenario, setSelectedScenario] = useState<SampleEventKind>("review_upload");
   const [submitting, setSubmitting] = useState(false);
   const [lastRecord, setLastRecord] = useState<AuditRecord | null>(null);
+  const [activeApprovalId, setActiveApprovalId] = useState<number | null>(null);
+  const [resolutionNote, setResolutionNote] = useState("");
+  const [resolvingAction, setResolvingAction] = useState<Exclude<EnforcementAction, "ask"> | null>(
+    null,
+  );
 
   useEffect(() => {
     void refreshDashboard(true);
@@ -70,6 +86,27 @@ export default function App() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  const pendingApprovals = snapshot?.pending_approvals ?? [];
+
+  useEffect(() => {
+    if (pendingApprovals.length === 0) {
+      if (activeApprovalId !== null) {
+        setActiveApprovalId(null);
+      }
+      return;
+    }
+
+    if (activeApprovalId && pendingApprovals.some((approval) => approval.id === activeApprovalId)) {
+      return;
+    }
+
+    setActiveApprovalId(pendingApprovals[0].id);
+  }, [activeApprovalId, pendingApprovals]);
+
+  useEffect(() => {
+    setResolutionNote("");
+  }, [activeApprovalId]);
 
   async function refreshDashboard(initial: boolean) {
     if (initial) {
@@ -106,6 +143,29 @@ export default function App() {
     }
   }
 
+  async function handleResolveApproval(action: Exclude<EnforcementAction, "ask">) {
+    const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
+    if (!activeApproval) {
+      return;
+    }
+
+    setResolvingAction(action);
+    try {
+      const resolved = await resolveApprovalRequest(
+        activeApproval.id,
+        action,
+        resolutionNote.trim() || null,
+      );
+      setLastRecord(resolved.audit_record);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (resolveError) {
+      setError(getErrorMessage(resolveError));
+    } finally {
+      setResolvingAction(null);
+    }
+  }
+
   const riskCards = useMemo(() => {
     const counts = snapshot?.counts ?? EMPTY_COUNTS;
     return [
@@ -121,14 +181,15 @@ export default function App() {
     return [
       { label: "Allowed", value: counts.allow },
       { label: "Warned", value: counts.warn },
-      { label: "Needs review", value: counts.ask },
+      { label: "Pending approvals", value: pendingApprovals.length },
       { label: "Blocked", value: counts.block + counts.kill },
     ] as const;
-  }, [snapshot]);
+  }, [pendingApprovals.length, snapshot]);
 
   const selectedScenarioMeta = SAMPLE_SCENARIOS.find(
     (scenario) => scenario.kind === selectedScenario,
   );
+  const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
 
   return (
     <div className="app-shell">
@@ -139,8 +200,8 @@ export default function App() {
             <p className="eyebrow">AgentGuard Desktop</p>
             <h1>The control room for your local runtime firewall.</h1>
             <p className="hero-text">
-              Watch the daemon in real time, inspect risk decisions, and fire known-good
-              test scenarios without leaving the desktop app.
+              Watch the daemon in real time, approve high-risk actions from a native modal, and
+              inspect every decision the runtime firewall makes.
             </p>
           </div>
           <div className="hero-side">
@@ -261,7 +322,7 @@ export default function App() {
               <h2>Recent runtime decisions</h2>
             </div>
             {loading ? (
-              <p className="empty-state">Loading daemon activity…</p>
+              <p className="empty-state">Loading daemon activity...</p>
             ) : snapshot && snapshot.records.length > 0 ? (
               <div className="timeline">
                 {snapshot.records.map((record) => (
@@ -306,28 +367,150 @@ export default function App() {
 
           <div className="card guidance-panel">
             <div className="section-heading">
-              <p className="eyebrow">Operator notes</p>
-              <h2>What this build proves</h2>
+              <p className="eyebrow">Approval queue</p>
+              <h2>The desktop now owns `ask` decisions</h2>
             </div>
+            {pendingApprovals.length > 0 ? (
+              <div className="approval-list">
+                {pendingApprovals.map((approval) => (
+                  <button
+                    key={approval.id}
+                    className={`approval-card ${
+                      activeApproval?.id === approval.id ? "selected" : ""
+                    }`}
+                    type="button"
+                    onClick={() => setActiveApprovalId(approval.id)}
+                  >
+                    <div className="approval-card-header">
+                      <span className="scenario-eyebrow">Pending review</span>
+                      <span className={`risk-chip ${approval.audit_record.decision.risk}`}>
+                        {approval.audit_record.decision.risk}
+                      </span>
+                    </div>
+                    <strong>{approval.audit_record.event.agent.name}</strong>
+                    <span>{approval.requested_decision.reason}</span>
+                    <span>{formatTarget(approval.audit_record.event.target)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-state">
+                No pending approvals right now. Run the review scenario to trigger the desktop
+                approval modal.
+              </p>
+            )}
             <ul className="guidance-list">
-              <li>The desktop app is reading the daemon through Tauri commands, not browser CORS hacks.</li>
-              <li>The dashboard reflects the same SQLite-backed audit log used by the daemon and proxy.</li>
-              <li>Sample scenarios let us validate low-risk, warning, and blocked paths from one place.</li>
-              <li>The next step is turning `ask` decisions into real interactive approvals instead of passive records.</li>
+              <li>High-risk uploads now create a queued approval request instead of becoming passive audit noise.</li>
+              <li>Approving or denying from the desktop updates the same SQLite-backed audit record the daemon serves.</li>
+              <li>Node and proxy clients can now wait on this approval loop instead of treating `ask` as a hard stop.</li>
             </ul>
             <div className="guidance-callout">
-              <span>Next milestone</span>
-              <strong>Interactive approval loop</strong>
+              <span>Current objective</span>
+              <strong>Make approvals feel instant</strong>
               <p>
-                When the daemon returns `ask`, the desktop should own the user decision and feed
-                it back into policy enforcement.
+                This build proves the approval queue, modal, and audit reconciliation are all wired
+                through one local control plane.
               </p>
             </div>
           </div>
         </section>
       </main>
+
+      {activeApproval ? (
+        <div className="approval-modal-scrim">
+          <section className="approval-modal card" aria-modal="true" role="dialog">
+            <div className="approval-modal-header">
+              <div>
+                <p className="eyebrow">Approval required</p>
+                <h2>{activeApproval.audit_record.event.agent.name} needs a decision</h2>
+              </div>
+              <div className="approval-modal-badges">
+                <span className={`decision-chip ${activeApproval.requested_decision.action}`}>
+                  {activeApproval.requested_decision.action}
+                </span>
+                <span className={`risk-chip ${activeApproval.audit_record.decision.risk}`}>
+                  {activeApproval.audit_record.decision.risk}
+                </span>
+              </div>
+            </div>
+
+            <p className="approval-modal-copy">{activeApproval.requested_decision.reason}</p>
+
+            <dl className="approval-facts">
+              <div>
+                <dt>Operation</dt>
+                <dd>{activeApproval.audit_record.event.operation}</dd>
+              </div>
+              <div>
+                <dt>Layer</dt>
+                <dd>{activeApproval.audit_record.event.layer}</dd>
+              </div>
+              <div>
+                <dt>Target</dt>
+                <dd>{formatTarget(activeApproval.audit_record.event.target)}</dd>
+              </div>
+            </dl>
+
+            <div className="approval-metadata">
+              {Object.entries(activeApproval.audit_record.event.metadata).map(([key, value]) => (
+                <div key={key} className="approval-metadata-row">
+                  <span>{key}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            <label className="approval-note-field">
+              <span>Operator note</span>
+              <textarea
+                placeholder="Optional context to store with this decision"
+                value={resolutionNote}
+                onChange={(event) => setResolutionNote(event.target.value)}
+              />
+            </label>
+
+            <div className="approval-actions">
+              <button
+                className="button button-ghost"
+                type="button"
+                onClick={() => void handleResolveApproval("block")}
+                disabled={resolvingAction !== null}
+              >
+                {resolvingAction === "block" ? "Denying..." : "Deny request"}
+              </button>
+              <button
+                className="button button-danger"
+                type="button"
+                onClick={() => void handleResolveApproval("kill")}
+                disabled={resolvingAction !== null}
+              >
+                {resolvingAction === "kill" ? "Stopping..." : "Deny and kill"}
+              </button>
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={() => void handleResolveApproval("allow")}
+                disabled={resolvingAction !== null}
+              >
+                {resolvingAction === "allow" ? "Approving..." : "Approve action"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function getActiveApproval(
+  approvals: ApprovalRequest[],
+  activeApprovalId: number | null,
+): ApprovalRequest | null {
+  if (approvals.length === 0) {
+    return null;
+  }
+
+  return approvals.find((approval) => approval.id === activeApprovalId) ?? approvals[0];
 }
 
 function formatTime(unixMs: number): string {

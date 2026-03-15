@@ -1,4 +1,4 @@
-import type { AuditRecord } from "./types.js";
+import type { AuditRecord, EvaluationOutcome } from "./types.js";
 
 export class AgentGuardHttpError extends Error {
   readonly status: number;
@@ -22,3 +22,12 @@ export class PolicyDeniedError extends Error {
   }
 }
 
+export class PendingApprovalError extends Error {
+  readonly outcome: EvaluationOutcome;
+
+  constructor(outcome: EvaluationOutcome) {
+    super(outcome.audit_record.decision.reason);
+    this.name = "PendingApprovalError";
+    this.outcome = outcome;
+  }
+}

@@ -1,10 +1,14 @@
 import type {
+  ApprovalRequest,
+  ApprovalStatus,
   AuditRecord,
   DashboardSnapshot,
+  EnforcementAction,
   SampleEventKind,
 } from "./types";
 
 let nextRecordId = 4;
+let nextApprovalId = 1;
 
 const previewRecords: AuditRecord[] = [
   {
@@ -96,6 +100,8 @@ const previewRecords: AuditRecord[] = [
   },
 ];
 
+const previewPendingApprovals: ApprovalRequest[] = [];
+
 export function mockDashboard(limit = 25): DashboardSnapshot {
   const records = previewRecords.slice(0, limit);
   return {
@@ -109,6 +115,7 @@ export function mockDashboard(limit = 25): DashboardSnapshot {
     },
     counts: summarize(records),
     records,
+    pending_approvals: previewPendingApprovals.slice(0, 10),
   };
 }
 
@@ -116,11 +123,97 @@ export function mockSubmitSampleEvent(kind: SampleEventKind): AuditRecord {
   const now = Date.now();
   const record = sampleRecord(kind, now);
   previewRecords.unshift(record);
+
+  if (record.decision.action === "ask") {
+    previewPendingApprovals.unshift({
+      id: nextApprovalId++,
+      created_at_unix_ms: now,
+      resolved_at_unix_ms: null,
+      status: "pending",
+      audit_record: record,
+      requested_decision: { ...record.decision },
+      resolved_decision: null,
+      decided_by: null,
+      resolution_note: null,
+    });
+  }
+
   return record;
+}
+
+export function mockResolveApprovalRequest(
+  approvalId: number,
+  action: Exclude<EnforcementAction, "ask">,
+  reason: string | null,
+): ApprovalRequest {
+  const approval = previewPendingApprovals.find((item) => item.id === approvalId);
+  if (!approval) {
+    throw new Error(`Mock approval ${approvalId} was not found.`);
+  }
+
+  const resolutionNote = reason ?? defaultResolutionReason(action);
+  const resolvedAt = Date.now();
+  const resolvedDecision = {
+    ...approval.audit_record.decision,
+    action,
+    reason: resolutionNote,
+  };
+
+  approval.status = approvalStatusForAction(action);
+  approval.resolved_at_unix_ms = resolvedAt;
+  approval.resolved_decision = resolvedDecision;
+  approval.decided_by = "preview-desktop";
+  approval.resolution_note = resolutionNote;
+  approval.audit_record = {
+    ...approval.audit_record,
+    decision: resolvedDecision,
+  };
+
+  const recordIndex = previewRecords.findIndex((record) => record.id === approval.audit_record.id);
+  if (recordIndex >= 0) {
+    previewRecords[recordIndex] = approval.audit_record;
+  }
+
+  const pendingIndex = previewPendingApprovals.findIndex((item) => item.id === approvalId);
+  previewPendingApprovals.splice(pendingIndex, 1);
+
+  return { ...approval };
 }
 
 function sampleRecord(kind: SampleEventKind, timestamp: number): AuditRecord {
   switch (kind) {
+    case "review_upload":
+      return {
+        id: nextRecordId++,
+        recorded_at_unix_ms: timestamp,
+        event: {
+          layer: "tool",
+          operation: "http_request",
+          agent: {
+            name: "Preview Scenario Runner",
+            executable_path: null,
+            process_id: null,
+            parent_process_id: null,
+            trust: "unknown",
+          },
+          target: {
+            kind: "domain",
+            value: "api.unknown-upload.example",
+          },
+          risk_hint: null,
+          metadata: {
+            source: "browser_preview",
+            network_direction: "upload",
+            method: "POST",
+          },
+        },
+        decision: {
+          action: "ask",
+          risk: "high",
+          reason: "High-risk event requires user confirmation.",
+          matched_rule_id: null,
+        },
+      };
     case "safe_read":
       return {
         id: nextRecordId++,
@@ -265,3 +358,27 @@ function summarize(records: AuditRecord[]) {
   return counts;
 }
 
+function approvalStatusForAction(action: Exclude<EnforcementAction, "ask">): ApprovalStatus {
+  switch (action) {
+    case "allow":
+    case "warn":
+      return "approved";
+    case "block":
+      return "denied";
+    case "kill":
+      return "killed";
+  }
+}
+
+function defaultResolutionReason(action: Exclude<EnforcementAction, "ask">): string {
+  switch (action) {
+    case "allow":
+      return "Approved by preview desktop.";
+    case "warn":
+      return "Approved with warning by preview desktop.";
+    case "block":
+      return "Denied by preview desktop.";
+    case "kill":
+      return "Rejected and kill requested by preview desktop.";
+  }
+}

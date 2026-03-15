@@ -18,11 +18,13 @@ import type {
 } from "./types.js";
 
 const execAsync = promisify(execCallback);
+const DEFAULT_WAIT_FOR_APPROVAL_MS = 30_000;
 
 export interface GuardedActionOptions {
   agent?: AgentLike;
   metadata?: Record<string, string>;
   riskHint?: RiskLevel | null;
+  waitForApprovalMs?: number;
 }
 
 export interface GuardedReadFileOptions extends GuardedActionOptions {
@@ -63,6 +65,7 @@ export async function guardedReadFile(
     operation: "read_file",
     target: pathTarget(resolvedPath),
     riskHint: options.riskHint,
+    waitForApprovalMs: options.waitForApprovalMs ?? DEFAULT_WAIT_FOR_APPROVAL_MS,
     agent: options.agent,
     metadata: withMetadata(options.metadata, {
       requested_path: resolvedPath,
@@ -89,6 +92,7 @@ export async function guardedWriteFile(
     operation: "write_file",
     target: pathTarget(resolvedPath),
     riskHint: options.riskHint,
+    waitForApprovalMs: options.waitForApprovalMs ?? DEFAULT_WAIT_FOR_APPROVAL_MS,
     agent: options.agent,
     metadata: withMetadata(options.metadata, {
       requested_path: resolvedPath,
@@ -121,6 +125,7 @@ export async function guardedFetch(
     operation: "http_request",
     target: domainTarget(url.host),
     riskHint: options.riskHint,
+    waitForApprovalMs: options.waitForApprovalMs ?? DEFAULT_WAIT_FOR_APPROVAL_MS,
     agent: options.agent,
     metadata: withMetadata(options.metadata, {
       method,
@@ -145,6 +150,7 @@ export async function guardedExecCommand(
     operation: "exec_command",
     target: commandTarget(command),
     riskHint: options.riskHint,
+    waitForApprovalMs: options.waitForApprovalMs ?? DEFAULT_WAIT_FOR_APPROVAL_MS,
     agent: options.agent,
     metadata: withMetadata(options.metadata, {
       cwd: options.cwd ? resolve(options.cwd) : process.cwd(),

@@ -3,14 +3,18 @@ use std::{
     fmt,
     net::SocketAddr,
     sync::{Arc, Mutex, PoisonError},
+    time::Duration,
 };
 
-use agentguard_models::{AuditRecord, Event};
+use agentguard_models::{
+    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, EvaluateEventRequest,
+    EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest,
+};
 use agentguard_policy::PolicyEngine;
 use agentguard_store::{AuditStore, StoreError};
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -23,12 +27,14 @@ const DEFAULT_DB_PATH: &str = "agentguard-dev.db";
 
 #[derive(Debug)]
 pub enum DaemonError {
+    InvalidRequest(String),
     Store(StoreError),
 }
 
 impl fmt::Display for DaemonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRequest(message) => write!(f, "{message}"),
             Self::Store(error) => write!(f, "{error}"),
         }
     }
@@ -38,6 +44,7 @@ impl Error for DaemonError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Store(error) => Some(error),
+            Self::InvalidRequest(_) => None,
         }
     }
 }
@@ -69,14 +76,87 @@ impl AgentGuardDaemon {
     }
 
     pub fn process_event(&self, event: Event) -> Result<AuditRecord> {
-        let decision = self.policy.decide(&event);
-        self.store
-            .record_event(&event, &decision)
-            .map_err(Into::into)
+        let (record, _) = self.record_evaluation(event)?;
+        Ok(record)
+    }
+
+    pub fn evaluate_event(&self, request: EvaluateEventRequest) -> Result<EvaluationOutcome> {
+        let (record, approval_request) = self.record_evaluation(request.event)?;
+        Ok(match approval_request {
+            Some(approval_request) => EvaluationOutcome::pending(record, approval_request),
+            None => EvaluationOutcome::completed(record),
+        })
     }
 
     pub fn recent_audit_records(&self, limit: usize) -> Result<Vec<AuditRecord>> {
         self.store.recent_audit_records(limit).map_err(Into::into)
+    }
+
+    pub fn list_approval_requests(
+        &self,
+        limit: usize,
+        pending_only: bool,
+    ) -> Result<Vec<ApprovalRequest>> {
+        self.store
+            .list_approval_requests(limit, pending_only)
+            .map_err(Into::into)
+    }
+
+    pub fn get_approval_request(&self, approval_id: i64) -> Result<Option<ApprovalRequest>> {
+        self.store.get_approval_request(approval_id).map_err(Into::into)
+    }
+
+    pub fn resolve_approval_request(
+        &self,
+        approval_id: i64,
+        resolution: ResolveApprovalRequest,
+    ) -> Result<Option<ApprovalRequest>> {
+        if resolution.action == EnforcementAction::Ask {
+            return Err(DaemonError::InvalidRequest(
+                "approval resolution action cannot be ask".into(),
+            ));
+        }
+
+        let current = match self.store.get_approval_request(approval_id)? {
+            Some(current) => current,
+            None => return Ok(None),
+        };
+
+        if current.status != ApprovalStatus::Pending {
+            return Ok(Some(current));
+        }
+
+        let resolution_note = resolution
+            .reason
+            .clone()
+            .unwrap_or_else(|| default_resolution_reason(resolution.action, &resolution.decided_by));
+        let final_decision = Decision {
+            action: resolution.action,
+            risk: current.audit_record.decision.risk,
+            reason: resolution_note.clone(),
+            matched_rule_id: current.requested_decision.matched_rule_id.clone(),
+        };
+
+        self.store
+            .resolve_approval_request(
+                approval_id,
+                &final_decision,
+                &resolution.decided_by,
+                Some(resolution_note.as_str()),
+            )
+            .map_err(Into::into)
+    }
+
+    fn record_evaluation(&self, event: Event) -> Result<(AuditRecord, Option<ApprovalRequest>)> {
+        let decision = self.policy.decide(&event);
+        let record = self.store.record_event(&event, &decision)?;
+        let approval_request = if decision.action == EnforcementAction::Ask {
+            Some(self.store.create_approval_request(&record)?)
+        } else {
+            None
+        };
+
+        Ok((record, approval_request))
     }
 }
 
@@ -123,6 +203,8 @@ impl ApiState {
 pub enum DaemonApiError {
     Config(String),
     Daemon(DaemonError),
+    InvalidRequest(String),
+    NotFound(String),
     StatePoisoned,
     Store(StoreError),
 }
@@ -132,6 +214,8 @@ impl fmt::Display for DaemonApiError {
         match self {
             Self::Config(message) => write!(f, "{message}"),
             Self::Daemon(error) => write!(f, "{error}"),
+            Self::InvalidRequest(message) => write!(f, "{message}"),
+            Self::NotFound(message) => write!(f, "{message}"),
             Self::StatePoisoned => write!(f, "daemon state lock poisoned"),
             Self::Store(error) => write!(f, "{error}"),
         }
@@ -157,7 +241,27 @@ impl From<DaemonError> for DaemonApiError {
 impl IntoResponse for DaemonApiError {
     fn into_response(self) -> Response {
         match self {
-            Self::Config(message) => (
+            Self::Config(message) | Self::InvalidRequest(message) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "message": message,
+                        "type": "invalid_request_error",
+                    }
+                })),
+            )
+                .into_response(),
+            Self::NotFound(message) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "error": {
+                        "message": message,
+                        "type": "not_found_error",
+                    }
+                })),
+            )
+                .into_response(),
+            Self::Daemon(DaemonError::InvalidRequest(message)) => (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "error": {
@@ -206,11 +310,20 @@ struct RecentAuditQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ApprovalListQuery {
+    limit: Option<usize>,
+    status: Option<String>,
+}
+
 pub fn app(daemon: AgentGuardDaemon) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/events", post(create_event))
+        .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
+        .route("/v1/approvals", get(list_approval_requests))
+        .route("/v1/approvals/{approval_id}/resolve", post(resolve_approval_request))
         .with_state(ApiState::new(daemon))
 }
 
@@ -247,6 +360,33 @@ async fn create_event(
     Ok(Json(record))
 }
 
+async fn evaluate_event(
+    State(state): State<ApiState>,
+    Json(request): Json<EvaluateEventRequest>,
+) -> std::result::Result<Json<EvaluationOutcome>, DaemonApiError> {
+    let wait_for_approval_ms = request.wait_for_approval_ms.unwrap_or(0).min(60_000);
+    let outcome = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .evaluate_event(request)?;
+
+    if outcome.status == EvaluationStatus::Completed || wait_for_approval_ms == 0 {
+        return Ok(Json(outcome));
+    }
+
+    let approval_id = outcome
+        .approval_request
+        .as_ref()
+        .map(|approval_request| approval_request.id)
+        .ok_or_else(|| {
+            DaemonApiError::Config("approval outcome did not include an approval request".into())
+        })?;
+
+    let resolved = wait_for_approval_resolution(&state, approval_id, wait_for_approval_ms).await?;
+    Ok(Json(resolved))
+}
+
 async fn list_audit_records(
     State(state): State<ApiState>,
     Query(query): Query<RecentAuditQuery>,
@@ -258,6 +398,94 @@ async fn list_audit_records(
         .map_err(lock_error)?
         .recent_audit_records(limit)?;
     Ok(Json(records))
+}
+
+async fn list_approval_requests(
+    State(state): State<ApiState>,
+    Query(query): Query<ApprovalListQuery>,
+) -> std::result::Result<Json<Vec<ApprovalRequest>>, DaemonApiError> {
+    let limit = query.limit.unwrap_or(25).min(500);
+    let pending_only = match query.status.as_deref() {
+        Some("pending") => true,
+        Some("all") | None => false,
+        Some(value) => {
+            return Err(DaemonApiError::InvalidRequest(format!(
+                "unsupported approval status filter: {value}"
+            )))
+        }
+    };
+
+    let approvals = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .list_approval_requests(limit, pending_only)?;
+    Ok(Json(approvals))
+}
+
+async fn resolve_approval_request(
+    State(state): State<ApiState>,
+    Path(approval_id): Path<i64>,
+    Json(resolution): Json<ResolveApprovalRequest>,
+) -> std::result::Result<Json<ApprovalRequest>, DaemonApiError> {
+    let approval = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .resolve_approval_request(approval_id, resolution)?
+        .ok_or_else(|| DaemonApiError::NotFound(format!("approval request {approval_id} was not found")))?;
+
+    Ok(Json(approval))
+}
+
+async fn wait_for_approval_resolution(
+    state: &ApiState,
+    approval_id: i64,
+    wait_for_approval_ms: u64,
+) -> std::result::Result<EvaluationOutcome, DaemonApiError> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(wait_for_approval_ms);
+    let poll_interval = Duration::from_millis(200);
+
+    loop {
+        let approval = state
+            .daemon
+            .lock()
+            .map_err(lock_error)?
+            .get_approval_request(approval_id)?
+            .ok_or_else(|| {
+                DaemonApiError::NotFound(format!("approval request {approval_id} was not found"))
+            })?;
+
+        if approval.status != ApprovalStatus::Pending {
+            return Ok(EvaluationOutcome::completed(approval.audit_record.clone()));
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Ok(EvaluationOutcome::pending(
+                approval.audit_record.clone(),
+                approval,
+            ));
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        let sleep_for = if remaining > poll_interval {
+            poll_interval
+        } else {
+            remaining
+        };
+        tokio::time::sleep(sleep_for).await;
+    }
+}
+
+fn default_resolution_reason(action: EnforcementAction, decided_by: &str) -> String {
+    match action {
+        EnforcementAction::Allow => format!("Approved by {decided_by}."),
+        EnforcementAction::Warn => format!("Approved with warning by {decided_by}."),
+        EnforcementAction::Block => format!("Denied by {decided_by}."),
+        EnforcementAction::Kill => format!("Rejected and kill requested by {decided_by}."),
+        EnforcementAction::Ask => "Pending additional review.".into(),
+    }
 }
 
 fn lock_error<T>(_error: PoisonError<T>) -> DaemonApiError {
@@ -272,7 +500,10 @@ mod tests {
     };
     use tower::ServiceExt;
 
-    use agentguard_models::{AgentIdentity, EnforcementAction, Layer, Operation, ResourceTarget};
+    use agentguard_models::{
+        AgentIdentity, EnforcementAction, EvaluateEventRequest, EvaluationStatus, Layer, Operation,
+        ResourceTarget,
+    };
     use agentguard_store::AuditStore;
 
     use super::*;
@@ -302,6 +533,113 @@ mod tests {
         assert_eq!(recent[0], record);
     }
 
+    #[test]
+    fn evaluating_high_risk_upload_creates_pending_approval() {
+        let daemon = AgentGuardDaemon::with_mvp_defaults(
+            AuditStore::open_in_memory().expect("store should initialize"),
+        );
+
+        let outcome = daemon
+            .evaluate_event(EvaluateEventRequest {
+                event: upload_event(),
+                wait_for_approval_ms: None,
+            })
+            .expect("evaluation should succeed");
+
+        assert_eq!(outcome.status, EvaluationStatus::PendingApproval);
+        assert_eq!(outcome.audit_record.decision.action, EnforcementAction::Ask);
+        assert_eq!(
+            daemon
+                .list_approval_requests(10, true)
+                .expect("pending approvals should load")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn api_waits_for_approval_resolution() {
+        let daemon = AgentGuardDaemon::with_mvp_defaults(
+            AuditStore::open_in_memory().expect("store should initialize"),
+        );
+        let app = app(daemon);
+
+        let evaluation_request = Request::builder()
+            .method("POST")
+            .uri("/v1/evaluate")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&EvaluateEventRequest {
+                    event: upload_event(),
+                    wait_for_approval_ms: Some(2_000),
+                })
+                .expect("evaluation request should serialize"),
+            ))
+            .expect("request should build");
+
+        let evaluation_task = {
+            let app = app.clone();
+            tokio::spawn(async move { app.oneshot(evaluation_request).await.expect("request should succeed") })
+        };
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let pending_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/approvals?status=pending&limit=10")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("pending approvals request should succeed");
+        assert_eq!(pending_response.status(), StatusCode::OK);
+
+        let pending_body = to_bytes(pending_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let approvals: Vec<ApprovalRequest> =
+            serde_json::from_slice(&pending_body).expect("approvals should decode");
+        assert_eq!(approvals.len(), 1);
+
+        let resolve_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/approvals/{}/resolve", approvals[0].id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&ResolveApprovalRequest {
+                            action: EnforcementAction::Allow,
+                            decided_by: "desktop-operator".into(),
+                            reason: Some("Approved by test.".into()),
+                        })
+                        .expect("resolution should serialize"),
+                    ))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("resolve request should succeed");
+        assert_eq!(resolve_response.status(), StatusCode::OK);
+
+        let evaluation_response = evaluation_task
+            .await
+            .expect("join should succeed");
+        assert_eq!(evaluation_response.status(), StatusCode::OK);
+
+        let body = to_bytes(evaluation_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let outcome: EvaluationOutcome =
+            serde_json::from_slice(&body).expect("evaluation outcome should decode");
+        assert_eq!(outcome.status, EvaluationStatus::Completed);
+        assert_eq!(outcome.audit_record.decision.action, EnforcementAction::Allow);
+        assert_eq!(outcome.audit_record.decision.reason, "Approved by test.");
+    }
+
     #[tokio::test]
     async fn api_persists_events_and_returns_recent_audit() {
         let daemon = AgentGuardDaemon::with_mvp_defaults(
@@ -323,33 +661,48 @@ mod tests {
             ))
             .expect("request should build");
 
-        let response = app
+        let create_response = app
             .clone()
             .oneshot(request)
             .await
-            .expect("event creation should succeed");
+            .expect("request should succeed");
+        assert_eq!(create_response.status(), StatusCode::OK);
 
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let audit_request = Request::builder()
-            .method("GET")
-            .uri("/v1/audit?limit=10")
-            .body(Body::empty())
-            .expect("audit request should build");
-        let audit_response = app
-            .oneshot(audit_request)
+        let body = to_bytes(create_response.into_body(), usize::MAX)
             .await
-            .expect("audit listing should succeed");
+            .expect("response body should read");
+        let record: AuditRecord =
+            serde_json::from_slice(&body).expect("record should decode");
+        assert_eq!(record.decision.action, EnforcementAction::Block);
 
-        assert_eq!(audit_response.status(), StatusCode::OK);
-
-        let body = to_bytes(audit_response.into_body(), 1024 * 1024)
+        let recent_response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/audit?limit=5")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
             .await
-            .expect("body should read");
+            .expect("request should succeed");
+        assert_eq!(recent_response.status(), StatusCode::OK);
+
+        let recent_body = to_bytes(recent_response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
         let records: Vec<AuditRecord> =
-            serde_json::from_slice(&body).expect("records should deserialize");
-
+            serde_json::from_slice(&recent_body).expect("records should decode");
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].decision.action, EnforcementAction::Block);
+        assert_eq!(records[0], record);
+    }
+
+    fn upload_event() -> Event {
+        Event::new(
+            AgentIdentity::named("Desktop Scenario Runner"),
+            Layer::Tool,
+            Operation::HttpRequest,
+            ResourceTarget::Domain("api.unknown-upload.example".into()),
+        )
+        .with_metadata("network_direction", "upload")
     }
 }

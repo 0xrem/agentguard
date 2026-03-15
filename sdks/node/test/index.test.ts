@@ -1,23 +1,31 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
   AgentGuardClient,
+  PendingApprovalError,
   PolicyDeniedError,
   guardedExecCommand,
   guardedFetch,
   guardedReadFile,
 } from "../src/index.js";
-import type { AuditRecord, Decision, Event } from "../src/types.js";
+import type {
+  ApprovalRequest,
+  AuditRecord,
+  Decision,
+  EvaluationOutcome,
+  Event,
+} from "../src/types.js";
 
 interface MockDaemon {
   url: string;
   records: AuditRecord[];
   events: Event[];
+  approvals: ApprovalRequest[];
   close: () => Promise<void>;
 }
 
@@ -34,11 +42,13 @@ test("client records events and lists audit entries", async () => {
     agent: "Claude Code",
   });
 
-  const record = await client.guardEvent({
-    layer: "command",
-    operation: "exec_command",
-    target: { kind: "command", value: "rm -rf ~" },
-  });
+  const record = await client.recordEvent(
+    client.buildEvent({
+      layer: "command",
+      operation: "exec_command",
+      target: { kind: "command", value: "rm -rf ~" },
+    }),
+  );
   const recent = await client.listAudit(5);
 
   assert.equal(record.event.agent.name, "Claude Code");
@@ -81,6 +91,40 @@ test("guardedFetch emits an http_request event before forwarding", async () => {
   assert.equal(await result.value.text(), "ok");
 });
 
+test("guardedFetch surfaces pending approvals when an upload is unresolved", async () => {
+  const daemon = await startMockDaemon((_event) => ({
+    action: "ask",
+    risk: "high",
+    reason: "High-risk event requires user confirmation.",
+    matched_rule_id: null,
+  }));
+  const upstream = await startTextServer("ok");
+  const client = new AgentGuardClient({
+    baseUrl: daemon.url,
+    agent: "AutoGPT",
+  });
+
+  await assert.rejects(
+    () =>
+      guardedFetch(
+        client,
+        `${upstream.url}/upload`,
+        {
+          method: "POST",
+          body: JSON.stringify({ hello: "world" }),
+        },
+        { waitForApprovalMs: 0 },
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof PendingApprovalError);
+      assert.equal(error.outcome.status, "pending_approval");
+      assert.ok(error.outcome.approval_request);
+      assert.equal(daemon.approvals.length, 1);
+      return true;
+    },
+  );
+});
+
 test("guardedExecCommand throws before execution when daemon blocks", async () => {
   const daemon = await startMockDaemon((_event) => ({
     action: "block",
@@ -113,18 +157,27 @@ async function startMockDaemon(
 ): Promise<MockDaemon> {
   const records: AuditRecord[] = [];
   const events: Event[] = [];
+  const approvals: ApprovalRequest[] = [];
   const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/v1/events") {
       const event = (await readJsonBody(request)) as Event;
+      const record = makeRecord(records.length + 1, event, decide(event));
       events.push(event);
-      const record: AuditRecord = {
-        id: records.length + 1,
-        recorded_at_unix_ms: Date.now(),
-        event,
-        decision: decide(event),
-      };
       records.unshift(record);
       return sendJson(response, 200, record);
+    }
+
+    if (request.method === "POST" && request.url === "/v1/evaluate") {
+      const payload = (await readJsonBody(request)) as {
+        event: Event;
+        wait_for_approval_ms?: number | null;
+      };
+      const decision = decide(payload.event);
+      const record = makeRecord(records.length + 1, payload.event, decision);
+      const outcome = makeEvaluationOutcome(record, approvals);
+      records.unshift(record);
+      events.push(payload.event);
+      return sendJson(response, 200, outcome);
     }
 
     if (request.method === "GET" && request.url?.startsWith("/v1/audit")) {
@@ -156,6 +209,7 @@ async function startMockDaemon(
     url: `http://127.0.0.1:${address.port}`,
     records,
     events,
+    approvals,
     close,
   };
 }
@@ -182,6 +236,44 @@ async function startTextServer(text: string): Promise<{ url: string; close: () =
   return {
     url: `http://127.0.0.1:${address.port}`,
     close,
+  };
+}
+
+function makeRecord(id: number, event: Event, decision: Decision): AuditRecord {
+  return {
+    id,
+    recorded_at_unix_ms: Date.now(),
+    event,
+    decision,
+  };
+}
+
+function makeEvaluationOutcome(record: AuditRecord, approvals: ApprovalRequest[]): EvaluationOutcome {
+  if (record.decision.action !== "ask") {
+    return {
+      status: "completed",
+      audit_record: record,
+      approval_request: null,
+    };
+  }
+
+  const approval: ApprovalRequest = {
+    id: approvals.length + 1,
+    created_at_unix_ms: Date.now(),
+    resolved_at_unix_ms: null,
+    status: "pending",
+    audit_record: record,
+    requested_decision: record.decision,
+    resolved_decision: null,
+    decided_by: null,
+    resolution_note: null,
+  };
+  approvals.unshift(approval);
+
+  return {
+    status: "pending_approval",
+    audit_record: record,
+    approval_request: approval,
   };
 }
 

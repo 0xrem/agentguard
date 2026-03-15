@@ -140,8 +140,9 @@ This is the contract between every other subsystem.
 Owns:
 
 - SQLite-backed audit persistence
+- SQLite-backed approval queue persistence
 - schema initialization and migrations
-- loading recent records for the desktop app and CLI tooling
+- loading recent records and pending approvals for the desktop app and CLI tooling
 
 This crate should stay storage-focused and avoid absorbing policy logic.
 
@@ -160,10 +161,10 @@ The first version should support a narrow but real MVP path before expanding to 
 - `agentguard-platform`: OS-specific observation adapters behind shared traits
 - `agentguard-client`: Rust client for talking to the daemon
 
-### Future applications
+### Applications and SDKs
 
-- `apps/desktop`: Tauri UI for alerts, dashboard, rules, and audit logs
-- `sdks/node`: TypeScript wrapper for Node-based agents
+- `apps/desktop`: Tauri UI for alerts, dashboard, approval modals, rules, and audit logs
+- `sdks/node`: TypeScript wrapper for Node-based agents with approval-aware guard calls
 - `sdks/python`: Python wrapper for Python-based agents
 
 ## Event Flow
@@ -178,7 +179,9 @@ The first version should support a narrow but real MVP path before expanding to 
    - ask
    - block
    - kill
-6. The daemon writes an audit record and optionally notifies the desktop app.
+6. If the decision is `ask`, the daemon creates an approval request and exposes it over the local API.
+7. The desktop app surfaces the approval as a modal and resolves it back to the daemon.
+8. The daemon updates the canonical audit record with the final decision.
 
 ## MVP Scope
 
@@ -213,9 +216,9 @@ Do not optimize for these yet:
 │   ├── agentguard-proxy/
 │   └── agentguard-store/
 ├── apps/
-│   └── desktop/            # planned
+│   └── desktop/
 └── sdks/
-    ├── node/               # planned
+    ├── node/
     └── python/             # planned
 ```
 
@@ -225,7 +228,7 @@ Do not optimize for these yet:
 2. Build the policy engine with tests for critical behaviors.
 3. Stand up a daemon that can evaluate sample events and emit decisions.
 4. Add a daemon API and local SQLite audit store.
-5. Add the Tauri desktop app.
+5. Ship the interactive desktop approval loop.
 6. Add agent wrappers for Python.
 
 ## Reference Links

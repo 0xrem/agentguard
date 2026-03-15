@@ -8,7 +8,7 @@ export {
   promptTarget,
   shouldDeny,
 } from "./client.js";
-export { AgentGuardHttpError, PolicyDeniedError } from "./errors.js";
+export { AgentGuardHttpError, PendingApprovalError, PolicyDeniedError } from "./errors.js";
 export {
   guardedExecCommand,
   guardedFetch,
@@ -16,12 +16,16 @@ export {
   guardedWriteFile,
 } from "./wrappers.js";
 export type {
+  ApprovalRequest,
   AgentIdentity,
   AgentLike,
+  ApprovalStatus,
   AuditRecord,
   Decision,
   EnforcementAction,
   Event,
+  EvaluationOutcome,
+  EvaluationStatus,
   GuardEventInput,
   GuardedResult,
   Layer,
