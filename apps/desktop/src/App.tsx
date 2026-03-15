@@ -126,12 +126,19 @@ export default function App() {
   }, []);
 
   const pendingApprovals = snapshot?.pending_approvals ?? [];
+  const [userDismissedApproval, setUserDismissedApproval] = useState<number | null>(null);
 
   useEffect(() => {
     if (pendingApprovals.length === 0) {
       if (activeApprovalId !== null) {
         setActiveApprovalId(null);
       }
+      setUserDismissedApproval(null);
+      return;
+    }
+
+    // If user manually dismissed an approval, don't auto-reopen for that specific approval
+    if (userDismissedApproval && pendingApprovals.some((approval) => approval.id === userDismissedApproval)) {
       return;
     }
 
@@ -140,7 +147,7 @@ export default function App() {
     }
 
     setActiveApprovalId(pendingApprovals[0].id);
-  }, [activeApprovalId, pendingApprovals]);
+  }, [activeApprovalId, pendingApprovals, userDismissedApproval]);
 
   useEffect(() => {
     setResolutionNote("");
@@ -258,8 +265,12 @@ export default function App() {
   }
 
   function handleCloseApprovalModal() {
-    // Just clear the active approval ID without making any API call
-    // This allows the user to close the modal without affecting the approval state
+    // Clear the active approval ID without resolving the approval
+    // This allows the user to dismiss the modal temporarily without making a decision
+    // The approval will remain in the pending queue for later review
+    if (activeApprovalId !== null) {
+      setUserDismissedApproval(activeApprovalId);
+    }
     setActiveApprovalId(null);
   }
 
