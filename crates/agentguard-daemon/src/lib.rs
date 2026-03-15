@@ -7,8 +7,8 @@ use std::{
 };
 
 use agentguard_models::{
-    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, EvaluateEventRequest,
-    EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest,
+    ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction,
+    EvaluateEventRequest, EvaluationOutcome, EvaluationStatus, Event, ResolveApprovalRequest,
 };
 use agentguard_policy::PolicyEngine;
 use agentguard_store::{AuditStore, StoreError};
@@ -103,7 +103,9 @@ impl AgentGuardDaemon {
     }
 
     pub fn get_approval_request(&self, approval_id: i64) -> Result<Option<ApprovalRequest>> {
-        self.store.get_approval_request(approval_id).map_err(Into::into)
+        self.store
+            .get_approval_request(approval_id)
+            .map_err(Into::into)
     }
 
     pub fn resolve_approval_request(
@@ -126,10 +128,9 @@ impl AgentGuardDaemon {
             return Ok(Some(current));
         }
 
-        let resolution_note = resolution
-            .reason
-            .clone()
-            .unwrap_or_else(|| default_resolution_reason(resolution.action, &resolution.decided_by));
+        let resolution_note = resolution.reason.clone().unwrap_or_else(|| {
+            default_resolution_reason(resolution.action, &resolution.decided_by)
+        });
         let final_decision = Decision {
             action: resolution.action,
             risk: current.audit_record.decision.risk,
@@ -323,7 +324,10 @@ pub fn app(daemon: AgentGuardDaemon) -> Router {
         .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
         .route("/v1/approvals", get(list_approval_requests))
-        .route("/v1/approvals/{approval_id}/resolve", post(resolve_approval_request))
+        .route(
+            "/v1/approvals/{approval_id}/resolve",
+            post(resolve_approval_request),
+        )
         .with_state(ApiState::new(daemon))
 }
 
@@ -411,7 +415,7 @@ async fn list_approval_requests(
         Some(value) => {
             return Err(DaemonApiError::InvalidRequest(format!(
                 "unsupported approval status filter: {value}"
-            )))
+            )));
         }
     };
 
@@ -433,7 +437,9 @@ async fn resolve_approval_request(
         .lock()
         .map_err(lock_error)?
         .resolve_approval_request(approval_id, resolution)?
-        .ok_or_else(|| DaemonApiError::NotFound(format!("approval request {approval_id} was not found")))?;
+        .ok_or_else(|| {
+            DaemonApiError::NotFound(format!("approval request {approval_id} was not found"))
+        })?;
 
     Ok(Json(approval))
 }
@@ -579,7 +585,11 @@ mod tests {
 
         let evaluation_task = {
             let app = app.clone();
-            tokio::spawn(async move { app.oneshot(evaluation_request).await.expect("request should succeed") })
+            tokio::spawn(async move {
+                app.oneshot(evaluation_request)
+                    .await
+                    .expect("request should succeed")
+            })
         };
 
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -625,9 +635,7 @@ mod tests {
             .expect("resolve request should succeed");
         assert_eq!(resolve_response.status(), StatusCode::OK);
 
-        let evaluation_response = evaluation_task
-            .await
-            .expect("join should succeed");
+        let evaluation_response = evaluation_task.await.expect("join should succeed");
         assert_eq!(evaluation_response.status(), StatusCode::OK);
 
         let body = to_bytes(evaluation_response.into_body(), usize::MAX)
@@ -636,7 +644,10 @@ mod tests {
         let outcome: EvaluationOutcome =
             serde_json::from_slice(&body).expect("evaluation outcome should decode");
         assert_eq!(outcome.status, EvaluationStatus::Completed);
-        assert_eq!(outcome.audit_record.decision.action, EnforcementAction::Allow);
+        assert_eq!(
+            outcome.audit_record.decision.action,
+            EnforcementAction::Allow
+        );
         assert_eq!(outcome.audit_record.decision.reason, "Approved by test.");
     }
 
@@ -671,8 +682,7 @@ mod tests {
         let body = to_bytes(create_response.into_body(), usize::MAX)
             .await
             .expect("response body should read");
-        let record: AuditRecord =
-            serde_json::from_slice(&body).expect("record should decode");
+        let record: AuditRecord = serde_json::from_slice(&body).expect("record should decode");
         assert_eq!(record.decision.action, EnforcementAction::Block);
 
         let recent_response = app

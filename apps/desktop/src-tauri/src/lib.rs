@@ -140,8 +140,8 @@ async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
             daemon_url: state.daemon_url.clone(),
             healthy: true,
             checked_at_unix_ms,
-            message:
-                "Desktop app can reach the daemon and the runtime control plane is live.".into(),
+            message: "Desktop app can reach the daemon and the runtime control plane is live."
+                .into(),
         },
         Ok(response) => DaemonStatus {
             daemon_url: state.daemon_url.clone(),
@@ -189,7 +189,10 @@ async fn fetch_pending_approvals(
     state: &DesktopState,
     limit: usize,
 ) -> Result<Vec<ApprovalRequest>, String> {
-    let url = format!("{}/v1/approvals?status=pending&limit={limit}", state.daemon_url);
+    let url = format!(
+        "{}/v1/approvals?status=pending&limit={limit}",
+        state.daemon_url
+    );
     let response = state
         .client
         .get(url)
@@ -226,7 +229,9 @@ async fn post_event(state: &DesktopState, event: &Event) -> Result<AuditRecord, 
             .text()
             .await
             .unwrap_or_else(|_| "unable to decode daemon error body".into());
-        return Err(format!("daemon rejected the sample event with {status}: {body}"));
+        return Err(format!(
+            "daemon rejected the sample event with {status}: {body}"
+        ));
     }
 
     response
@@ -255,7 +260,9 @@ async fn post_approval_resolution(
             .text()
             .await
             .unwrap_or_else(|_| "unable to decode daemon error body".into());
-        return Err(format!("daemon rejected the approval resolution with {status}: {body}"));
+        return Err(format!(
+            "daemon rejected the approval resolution with {status}: {body}"
+        ));
     }
 
     response

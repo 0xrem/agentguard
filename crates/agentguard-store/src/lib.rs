@@ -274,8 +274,9 @@ impl AuditStore {
         )?;
 
         let approval_id = self.connection.last_insert_rowid();
-        self.get_approval_request(approval_id)?
-            .ok_or_else(|| StoreError::InvalidInput("approval request was not found after insert".into()))
+        self.get_approval_request(approval_id)?.ok_or_else(|| {
+            StoreError::InvalidInput("approval request was not found after insert".into())
+        })
     }
 
     pub fn resolve_approval_request(
@@ -374,7 +375,10 @@ impl AuditStore {
         };
 
         let rows = if pending_only {
-            statement.query_map(params![ApprovalStatus::Pending.as_str(), limit as i64], approval_request_from_row)?
+            statement.query_map(
+                params![ApprovalStatus::Pending.as_str(), limit as i64],
+                approval_request_from_row,
+            )?
         } else {
             statement.query_map(params![limit as i64], approval_request_from_row)?
         };
@@ -577,10 +581,16 @@ mod tests {
             .expect("resolved approval should exist");
 
         assert_eq!(resolved.status, ApprovalStatus::Approved);
-        assert_eq!(resolved.audit_record.decision.action, EnforcementAction::Allow);
+        assert_eq!(
+            resolved.audit_record.decision.action,
+            EnforcementAction::Allow
+        );
         assert_eq!(resolved.decided_by.as_deref(), Some("desktop-operator"));
         assert_eq!(resolved.resolution_note.as_deref(), Some("Looks safe."));
-        assert_eq!(resolved.resolved_decision.as_ref().map(|d| d.action), Some(EnforcementAction::Allow));
+        assert_eq!(
+            resolved.resolved_decision.as_ref().map(|d| d.action),
+            Some(EnforcementAction::Allow)
+        );
     }
 
     #[test]
