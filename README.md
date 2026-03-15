@@ -182,7 +182,7 @@ Current end-to-end proof:
 
 - `cargo test -p agentguard-proxy --test approval_flow`
 - this spins up a mock upstream model API, a local AgentGuard proxy, and a local daemon on the same SQLite control plane
-- it verifies both OpenAI-style paths, `/v1/chat/completions` and `/v1/responses`, including pending approvals and operator-approved release
+- it verifies both OpenAI-style paths, `/v1/chat/completions` and `/v1/responses`, in both standard and `stream=true` modes, including pending approvals and operator-approved release
 - `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -v`
 - this verifies the Python SDK follows the same allow, pending-approval, deny, and approval-resolution semantics as the Node wrappers
 - `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -p 'test_daemon_integration.py' -v`

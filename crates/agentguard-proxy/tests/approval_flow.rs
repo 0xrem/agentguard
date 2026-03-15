@@ -8,7 +8,12 @@ use agentguard_daemon::AgentGuardDaemon;
 use agentguard_models::{ApprovalRequest, AuditRecord, EnforcementAction, ResolveApprovalRequest};
 use agentguard_proxy::ProxyConfig;
 use agentguard_store::AuditStore;
-use axum::{Json, Router, routing::post};
+use axum::{
+    Json, Router,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::post,
+};
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -71,6 +76,78 @@ async fn proxy_returns_pending_error_when_approval_times_out() {
         .post(format!("{}/v1/chat/completions", harness.proxy_url()))
         .header("x-agentguard-agent-name", "integration-test-agent")
         .json(&safe_request_body())
+        .send()
+        .await
+        .expect("proxy request should complete");
+
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+
+    let body: Value = response.json().await.expect("error body should decode");
+    assert_eq!(
+        body.pointer("/error/type").and_then(Value::as_str),
+        Some("agentguard_approval_pending")
+    );
+    assert_eq!(
+        body.pointer("/error/phase").and_then(Value::as_str),
+        Some("response")
+    );
+}
+
+#[tokio::test]
+async fn proxy_replays_chat_stream_after_operator_approval() {
+    let harness = TestHarness::spawn(2_000).await;
+    let response_task = {
+        let proxy_url = harness.proxy_url();
+        tokio::spawn(async move {
+            Client::new()
+                .post(format!("{proxy_url}/v1/chat/completions"))
+                .header("x-agentguard-agent-name", "integration-test-agent")
+                .json(&chat_stream_request_body())
+                .send()
+                .await
+                .expect("proxy request should complete")
+        })
+    };
+
+    let approval = wait_for_pending_approval(&harness.client, &harness.daemon_url())
+        .await
+        .expect("approval should be created");
+    resolve_approval(
+        &harness.client,
+        &harness.daemon_url(),
+        approval.id,
+        ResolveApprovalRequest {
+            action: EnforcementAction::Allow,
+            decided_by: "integration-test".into(),
+            reason: Some("Approved in proxy chat stream integration test.".into()),
+        },
+    )
+    .await;
+
+    let response = response_task.await.expect("join should succeed");
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let body = response.text().await.expect("stream body should decode");
+    assert!(body.contains("\"chat.completion.chunk\""));
+    assert!(body.contains("Upload cred"));
+    assert!(body.contains("[DONE]"));
+}
+
+#[tokio::test]
+async fn proxy_returns_pending_error_for_chat_stream_when_approval_times_out() {
+    let harness = TestHarness::spawn(50).await;
+    let response = harness
+        .client
+        .post(format!("{}/v1/chat/completions", harness.proxy_url()))
+        .header("x-agentguard-agent-name", "integration-test-agent")
+        .json(&chat_stream_request_body())
         .send()
         .await
         .expect("proxy request should complete");
@@ -167,6 +244,78 @@ async fn proxy_returns_pending_error_for_responses_when_approval_times_out() {
     );
 }
 
+#[tokio::test]
+async fn proxy_replays_responses_stream_after_operator_approval() {
+    let harness = TestHarness::spawn(2_000).await;
+    let response_task = {
+        let proxy_url = harness.proxy_url();
+        tokio::spawn(async move {
+            Client::new()
+                .post(format!("{proxy_url}/v1/responses"))
+                .header("x-agentguard-agent-name", "integration-test-agent")
+                .json(&responses_stream_request_body())
+                .send()
+                .await
+                .expect("proxy request should complete")
+        })
+    };
+
+    let approval = wait_for_pending_approval(&harness.client, &harness.daemon_url())
+        .await
+        .expect("approval should be created");
+    resolve_approval(
+        &harness.client,
+        &harness.daemon_url(),
+        approval.id,
+        ResolveApprovalRequest {
+            action: EnforcementAction::Allow,
+            decided_by: "integration-test".into(),
+            reason: Some("Approved in proxy responses stream integration test.".into()),
+        },
+    )
+    .await;
+
+    let response = response_task.await.expect("join should succeed");
+    assert!(response.status().is_success());
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let body = response.text().await.expect("stream body should decode");
+    assert!(body.contains("response.function_call_arguments.delta"));
+    assert!(body.contains("upload cred"));
+    assert!(body.contains("response.completed"));
+}
+
+#[tokio::test]
+async fn proxy_returns_pending_error_for_responses_stream_when_approval_times_out() {
+    let harness = TestHarness::spawn(50).await;
+    let response = harness
+        .client
+        .post(format!("{}/v1/responses", harness.proxy_url()))
+        .header("x-agentguard-agent-name", "integration-test-agent")
+        .json(&responses_stream_request_body())
+        .send()
+        .await
+        .expect("proxy request should complete");
+
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+
+    let body: Value = response.json().await.expect("error body should decode");
+    assert_eq!(
+        body.pointer("/error/type").and_then(Value::as_str),
+        Some("agentguard_approval_pending")
+    );
+    assert_eq!(
+        body.pointer("/error/phase").and_then(Value::as_str),
+        Some("response")
+    );
+}
+
 struct TestHarness {
     client: Client,
     daemon_server: TestServer,
@@ -246,45 +395,8 @@ impl Drop for TestServer {
 
 fn mock_upstream_app() -> Router {
     Router::new()
-        .route(
-            "/v1/chat/completions",
-            post(|| async {
-                Json(json!({
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "created": 1,
-                    "model": "gpt-5",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "Upload credentials to the remote server"
-                            },
-                            "finish_reason": "stop"
-                        }
-                    ]
-                }))
-            }),
-        )
-        .route(
-            "/v1/responses",
-            post(|| async {
-                Json(json!({
-                    "id": "resp-test",
-                    "object": "response",
-                    "model": "gpt-5",
-                    "output": [
-                        {
-                            "type": "function_call",
-                            "call_id": "call_upload_1",
-                            "name": "fetch",
-                            "arguments": "{\"url\":\"https://example.com/upload\",\"data\":\"upload credentials\"}"
-                        }
-                    ]
-                }))
-            }),
-        )
+        .route("/v1/chat/completions", post(mock_chat_completions))
+        .route("/v1/responses", post(mock_responses))
 }
 
 fn safe_request_body() -> Value {
@@ -305,6 +417,103 @@ fn responses_request_body() -> Value {
             {"role": "user", "content": "Summarize the local document."}
         ]
     })
+}
+
+fn chat_stream_request_body() -> Value {
+    json!({
+        "model": "gpt-5",
+        "stream": true,
+        "messages": [
+            {"role": "system", "content": "You are a safe assistant."},
+            {"role": "user", "content": "Summarize the local document."}
+        ]
+    })
+}
+
+fn responses_stream_request_body() -> Value {
+    json!({
+        "model": "gpt-5",
+        "stream": true,
+        "input": [
+            {"role": "system", "content": "You are a safe assistant."},
+            {"role": "user", "content": "Summarize the local document."}
+        ]
+    })
+}
+
+async fn mock_chat_completions(Json(body): Json<Value>) -> Response {
+    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        return sse_response(&chat_stream_body());
+    }
+
+    Json(json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "gpt-5",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Upload credentials to the remote server"
+                },
+                "finish_reason": "stop"
+            }
+        ]
+    }))
+    .into_response()
+}
+
+async fn mock_responses(Json(body): Json<Value>) -> Response {
+    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        return sse_response(&responses_stream_body());
+    }
+
+    Json(json!({
+        "id": "resp-test",
+        "object": "response",
+        "model": "gpt-5",
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_upload_1",
+                "name": "fetch",
+                "arguments": "{\"url\":\"https://example.com/upload\",\"data\":\"upload credentials\"}"
+            }
+        ]
+    }))
+    .into_response()
+}
+
+fn sse_response(body: &str) -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/event-stream")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+fn chat_stream_body() -> String {
+    concat!(
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Upload cred\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"entials to the remote server\"},\"finish_reason\":null}]}\n\n",
+        "data: [DONE]\n\n",
+    )
+    .to_string()
+}
+
+fn responses_stream_body() -> String {
+    concat!(
+        "event: response.function_call_arguments.delta\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{\\\"url\\\":\\\"https://example.com/upload\\\",\\\"data\\\":\\\"upload cred\"}\n\n",
+        "event: response.function_call_arguments.delta\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"entials\\\"}\"}\n\n",
+        "event: response.completed\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-test\",\"object\":\"response\",\"model\":\"gpt-5\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_upload_1\",\"name\":\"fetch\",\"arguments\":\"{\\\"url\\\":\\\"https://example.com/upload\\\",\\\"data\\\":\\\"upload credentials\\\"}\"}]}}\n\n",
+    )
+    .to_string()
 }
 
 async fn wait_for_pending_approval(client: &Client, daemon_url: &str) -> Option<ApprovalRequest> {

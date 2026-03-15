@@ -13,3 +13,4 @@ axum.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true

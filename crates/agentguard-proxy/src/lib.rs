@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     error::Error,
     fmt,
     net::SocketAddr,
@@ -14,6 +15,7 @@ use agentguard_models::{
 use agentguard_store::AuditStore;
 use axum::{
     Json, Router,
+    body::Body,
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -21,6 +23,7 @@ use axum::{
 };
 use reqwest::Client;
 use serde_json::{Value, json};
+use tokio_stream::iter;
 
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8787";
 const DEFAULT_UPSTREAM_BASE_URL: &str = "https://api.openai.com";
@@ -30,6 +33,7 @@ const PROMPT_AUDIT_LIMIT: usize = 8_192;
 const AGENT_NAME_HEADER: &str = "x-agentguard-agent-name";
 const OPENAI_ORGANIZATION_HEADER: &str = "openai-organization";
 const OPENAI_PROJECT_HEADER: &str = "openai-project";
+const SSE_DATA_PREFIX: &str = "data:";
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
@@ -306,6 +310,13 @@ impl ProxyApi {
             Self::Responses => extract_responses_response_text(body),
         }
     }
+
+    fn append_stream_event_text(self, payload: &Value, prompt_text: &mut String) {
+        match self {
+            Self::ChatCompletions => append_chat_stream_event_text(payload, prompt_text),
+            Self::Responses => append_responses_stream_event_text(payload, prompt_text),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -572,34 +583,49 @@ async fn proxy_json_request(
     body: Value,
     api: ProxyApi,
 ) -> Result<Response, ProxyError> {
-    if body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
-        return Err(ProxyError::BadRequest(
-            "stream=true is not supported yet by agentguard-proxy".into(),
-        ));
-    }
+    let is_stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
     let agent_name = extract_agent_name(&headers);
-    let model = body.get("model").and_then(Value::as_str);
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
     let request_prompt = api.extract_request_text(&body);
     let request_outcome = state
         .guard
-        .inspect_request(&agent_name, model, &request_prompt)
+        .inspect_request(&agent_name, model.as_deref(), &request_prompt)
         .await?;
     enforce_inspection_outcome(request_outcome)?;
 
     let upstream_response = state.forward_upstream_request(&headers, &body, api).await?;
+    if is_stream {
+        return state
+            .handle_streaming_upstream_response(
+                api,
+                &agent_name,
+                model.as_deref(),
+                upstream_response,
+            )
+            .await;
+    }
+
     let status = upstream_response.status();
+    let upstream_headers = upstream_response.headers().clone();
     let bytes = upstream_response.bytes().await?;
 
     if !status.is_success() {
-        return Ok((status, bytes).into_response());
+        return Ok(build_buffered_response(
+            status,
+            &upstream_headers,
+            bytes.to_vec(),
+        )?);
     }
 
     let response_body: Value = serde_json::from_slice(&bytes)?;
     let response_prompt = api.extract_response_text(&response_body);
     let response_outcome = state
         .guard
-        .inspect_response(&agent_name, model, &response_prompt)
+        .inspect_response(&agent_name, model.as_deref(), &response_prompt)
         .await?;
     enforce_inspection_outcome(response_outcome)?;
 
@@ -635,6 +661,36 @@ impl ProxyState {
     fn upstream_url(&self, api: ProxyApi) -> String {
         format!("{}{}", self.upstream_base_url, api.upstream_path())
     }
+
+    async fn handle_streaming_upstream_response(
+        &self,
+        api: ProxyApi,
+        agent_name: &str,
+        model: Option<&str>,
+        upstream_response: reqwest::Response,
+    ) -> Result<Response, ProxyError> {
+        let status = upstream_response.status();
+        let headers = upstream_response.headers().clone();
+        let bytes = upstream_response.bytes().await?;
+
+        if !status.is_success() {
+            return build_buffered_response(status, &headers, bytes.to_vec());
+        }
+
+        let buffered = buffer_sse_response(api, &bytes)?;
+        let response_outcome = self
+            .guard
+            .inspect_response(agent_name, model, &buffered.prompt_text)
+            .await?;
+        enforce_inspection_outcome(response_outcome)?;
+
+        build_sse_response(status, &headers, buffered.chunks)
+    }
+}
+
+struct BufferedSseResponse {
+    chunks: Vec<Vec<u8>>,
+    prompt_text: String,
 }
 
 fn enforce_inspection_outcome(outcome: InspectionOutcome) -> Result<(), ProxyError> {
@@ -733,6 +789,74 @@ pub fn extract_responses_response_text(body: &Value) -> String {
     }
 
     join_text_parts(parts).unwrap_or_default()
+}
+
+fn append_chat_stream_event_text(payload: &Value, prompt_text: &mut String) {
+    if let Some(choices) = payload.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            let Some(delta) = choice.get("delta") else {
+                continue;
+            };
+
+            if let Some(content) = extract_content_field(delta.get("content")) {
+                push_stream_fragment(prompt_text, &content);
+            }
+
+            if let Some(function_call) = delta.get("function_call") {
+                if let Some(arguments) = function_call.get("arguments").and_then(Value::as_str) {
+                    push_stream_fragment(prompt_text, arguments);
+                }
+            }
+
+            if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                for tool_call in tool_calls {
+                    if let Some(arguments) = tool_call
+                        .pointer("/function/arguments")
+                        .and_then(Value::as_str)
+                    {
+                        push_stream_fragment(prompt_text, arguments);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn append_responses_stream_event_text(payload: &Value, prompt_text: &mut String) {
+    match payload.get("type").and_then(Value::as_str) {
+        Some("response.output_text.delta") => {
+            if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
+                push_stream_fragment(prompt_text, delta);
+            }
+        }
+        Some("response.function_call_arguments.delta") => {
+            if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
+                push_stream_fragment(prompt_text, delta);
+            }
+        }
+        Some("response.output_item.added") | Some("response.output_item.done") => {
+            if let Some(item) = payload.get("item") {
+                push_stream_fragment(
+                    prompt_text,
+                    &extract_responses_output_item(item).unwrap_or_default(),
+                );
+            }
+        }
+        Some("response.completed") => {
+            if prompt_text.is_empty() {
+                if let Some(response) = payload.get("response") {
+                    push_stream_fragment(prompt_text, &extract_responses_response_text(response));
+                }
+            }
+        }
+        _ => {
+            if let Some(item) = payload.get("item") {
+                if let Some(fragment) = extract_responses_output_item(item) {
+                    push_stream_fragment(prompt_text, &fragment);
+                }
+            }
+        }
+    }
 }
 
 fn extract_responses_input(input: Option<&Value>) -> Option<String> {
@@ -871,6 +995,97 @@ fn join_text_parts(parts: Vec<String>) -> Option<String> {
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+fn push_stream_fragment(prompt_text: &mut String, fragment: &str) {
+    if fragment.is_empty() {
+        return;
+    }
+
+    prompt_text.push_str(fragment);
+}
+
+fn buffer_sse_response(api: ProxyApi, bytes: &[u8]) -> Result<BufferedSseResponse, ProxyError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        ProxyError::UpstreamBody(format!(
+            "upstream SSE response was not valid UTF-8: {error}"
+        ))
+    })?;
+    let normalized = text.replace("\r\n", "\n");
+    let mut prompt_text = String::new();
+    let mut chunks = Vec::new();
+
+    for raw_event in normalized.split("\n\n") {
+        if raw_event.trim().is_empty() {
+            continue;
+        }
+
+        chunks.push(format!("{raw_event}\n\n").into_bytes());
+
+        let data = extract_sse_data(raw_event);
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+
+        let payload: Value = serde_json::from_str(&data).map_err(|error| {
+            ProxyError::UpstreamBody(format!("failed to decode upstream SSE JSON: {error}"))
+        })?;
+        api.append_stream_event_text(&payload, &mut prompt_text);
+    }
+
+    Ok(BufferedSseResponse {
+        chunks,
+        prompt_text,
+    })
+}
+
+fn extract_sse_data(raw_event: &str) -> String {
+    raw_event
+        .lines()
+        .filter_map(|line| line.strip_prefix(SSE_DATA_PREFIX))
+        .map(|line| line.trim_start())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_sse_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    chunks: Vec<Vec<u8>>,
+) -> Result<Response, ProxyError> {
+    let stream = iter(chunks.into_iter().map(Ok::<_, Infallible>));
+    build_response(status, headers, Body::from_stream(stream))
+}
+
+fn build_buffered_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: Vec<u8>,
+) -> Result<Response, ProxyError> {
+    build_response(status, headers, Body::from(body))
+}
+
+fn build_response(
+    status: StatusCode,
+    headers: &HeaderMap,
+    body: Body,
+) -> Result<Response, ProxyError> {
+    let mut builder = Response::builder().status(status);
+
+    for (name, value) in headers {
+        if *name == header::CONTENT_LENGTH
+            || *name == header::TRANSFER_ENCODING
+            || *name == header::CONNECTION
+        {
+            continue;
+        }
+
+        builder = builder.header(name, value);
+    }
+
+    builder
+        .body(body)
+        .map_err(|error| ProxyError::Config(format!("failed to build proxy response: {error}")))
 }
 
 fn truncate_for_audit(input: &str) -> String {
