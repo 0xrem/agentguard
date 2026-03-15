@@ -178,6 +178,12 @@ Success means:
 
 AgentGuard is early. This repository is the foundation for the product vision, threat model, and first implementation milestones.
 
+Current end-to-end proof:
+
+- `cargo test -p agentguard-proxy --test approval_flow`
+- this spins up a mock upstream model API, a local AgentGuard proxy, and a local daemon on the same SQLite control plane
+- it verifies both paths: prompt responses stay pending until operator approval, and approved responses are released cleanly afterward
+
 The most useful contributions right now are:
 
 - runtime monitoring and OS-level interception design
