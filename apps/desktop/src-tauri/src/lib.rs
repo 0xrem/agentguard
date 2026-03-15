@@ -11,7 +11,7 @@ use agentguard_models::{
     Rule,
 };
 use reqwest::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 #[cfg(unix)]
@@ -104,6 +104,30 @@ struct RuntimeEnvironment {
     openai_key_available: bool,
     issues: Vec<String>,
     message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct RuleExport {
+    version: String,
+    exported_at: u64,
+    rules: Vec<Rule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuleImport {
+    export_data: RuleExport,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditQuery {
+    agent_name: Option<String>,
+    operation: Option<String>,
+    action: Option<String>,
+    risk_level: Option<String>,
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -316,6 +340,88 @@ async fn run_real_agent_demo(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<DemoRunResult, String> {
     run_live_demo(&state).await
+}
+
+#[tauri::command]
+async fn export_policy_rules(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<RuleExport, String> {
+    let rules = fetch_policy_rules(&state, 1000).await?;
+    let policy_rules: Vec<Rule> = rules.into_iter().map(|managed| managed.rule).collect();
+
+    Ok(RuleExport {
+        version: "1.0".into(),
+        exported_at: now_unix_ms() as u64,
+        rules: policy_rules,
+    })
+}
+
+#[tauri::command]
+async fn import_policy_rules(
+    state: tauri::State<'_, DesktopState>,
+    export_data: RuleExport,
+) -> Result<Vec<ManagedRule>, String> {
+    let mut imported_rules = Vec::new();
+
+    for rule in export_data.rules {
+        match post_policy_rule(&state, &rule).await {
+            Ok(managed_rule) => imported_rules.push(managed_rule),
+            Err(error) => {
+                eprintln!("Failed to import rule {}: {}", rule.id, error);
+            }
+        }
+    }
+
+    Ok(imported_rules)
+}
+
+#[tauri::command]
+async fn query_audit_logs(
+    state: tauri::State<'_, DesktopState>,
+    query: AuditQuery,
+) -> Result<Vec<AuditRecord>, String> {
+    let mut url = format!("{}/v1/audit?", state.daemon_url);
+
+    if let Some(agent_name) = &query.agent_name {
+        url.push_str(&format!("agent_name={}&", agent_name));
+    }
+    if let Some(operation) = &query.operation {
+        url.push_str(&format!("operation={}&", operation));
+    }
+    if let Some(action) = &query.action {
+        url.push_str(&format!("action={}&", action));
+    }
+    if let Some(risk_level) = &query.risk_level {
+        url.push_str(&format!("risk_level={}&", risk_level));
+    }
+    if let Some(start_time) = query.start_time {
+        url.push_str(&format!("start_time={}&", start_time));
+    }
+    if let Some(end_time) = query.end_time {
+        url.push_str(&format!("end_time={}&", end_time));
+    }
+    if let Some(limit) = query.limit {
+        url.push_str(&format!("limit={}&", limit));
+    }
+    if let Some(offset) = query.offset {
+        url.push_str(&format!("offset={}&", offset));
+    }
+
+    let response = state
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to query audit logs: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("failed to query audit logs: {}", response.status()));
+    }
+
+    response
+        .json::<Vec<AuditRecord>>()
+        .await
+        .map_err(|error| format!("failed to decode audit logs: {error}"))
 }
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
@@ -1424,7 +1530,10 @@ pub fn run() {
             set_policy_rule_enabled,
             delete_policy_rule,
             start_local_stack,
-            run_real_agent_demo
+            run_real_agent_demo,
+            export_policy_rules,
+            import_policy_rules,
+            query_audit_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentguard desktop application");

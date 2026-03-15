@@ -534,18 +534,18 @@ export default function App() {
    * Opens the rule editor with pre-filled values from the template
    */
   function handleCreateFromTemplate(templateId: string) {
-    const template = ruleTemplates.find((t) => t.id === templateId);
+    const template = RULE_TEMPLATES.find((t) => t.id === templateId);
     if (!template) return;
     
     setRuleDraft({
       id: "new",
-      action: template.template.action === "block" ? "block" : "allow",
-      priority: template.template.priority,
-      layer: template.template.layer,
-      operation: template.template.operation,
-      minimum_risk: template.template.minimum_risk,
-      agent_value: template.template.agent_value,
-      target_value: template.template.target_value,
+      action: template.rule.action === "block" ? "block" : "allow",
+      priority: template.rule.priority,
+      layer: template.rule.layer,
+      operation: template.rule.operation,
+      minimum_risk: template.rule.minimum_risk,
+      agent_value: getPatternValue(template.rule.agent),
+      target_value: getPatternValue(template.rule.target),
       reason: `Created from template: ${template.name}`,
     });
     setEditingRuleId(null);
@@ -594,22 +594,12 @@ export default function App() {
     setShowTemplateModal(true);
   }
 
-  function triggerImportRules() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = (e) => {
-      const event = e as unknown as React.ChangeEvent<HTMLInputElement>;
-      handleImportRules(event);
-    };
-    input.click();
-  }
-
   return (
     <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
       {currentPage === 'dashboard' && (
         <Dashboard
           snapshot={snapshot}
+          loading={loading}
           refreshing={refreshing}
           error={error}
           selectedScenario={selectedScenario}
@@ -621,32 +611,13 @@ export default function App() {
           runtimeIssues={runtimeIssues}
           onStartLocalStack={handleStartLocalStack}
           startingStack={startingStack}
-          stackResult={stackResult ? {
-            mode: stackResult.daemon_pid ? 'bundled' : 'workspace',
-            command: stackResult.message,
-            exit_code: stackResult.daemon_pid ? 0 : 1,
-            stdout: `Daemon PID: ${stackResult.daemon_pid ?? 'N/A'}`,
-            stderr: '',
-            message: stackResult.message
-          } : null}
+          stackResult={stackResult}
           onRunRealDemo={handleRunRealDemo}
           runningDemo={runningDemo}
           demoResult={demoResult}
-          onRefresh={() => refreshDashboard(false)}
-          riskCards={riskCards.map(card => ({
-            label: card.label,
-            value: card.value,
-            color: card.tone === 'critical' ? '#ef4444' : 
-                   card.tone === 'high' ? '#f97316' : 
-                   card.tone === 'medium' ? '#eab308' : '#22c55e'
-          }))}
-          actionCards={actionCards.map(card => ({
-            label: card.label,
-            value: card.value,
-            color: card.label === 'Allowed' ? '#22c55e' :
-                   card.label === 'Warned' ? '#eab308' :
-                   card.label === 'Blocked' ? '#ef4444' : '#3b82f6'
-          }))}
+          onRefresh={() => void refreshDashboard(false)}
+          riskCards={riskCards}
+          actionCards={actionCards}
         />
       )}
       
@@ -654,11 +625,12 @@ export default function App() {
         <AuditPage
           records={filteredAuditRecords}
           loading={loading}
+          onRefresh={() => void refreshDashboard(false)}
         />
       )}
       
       {currentPage === 'processes' && (
-        <ProcessesPage loading={loading} />
+        <ProcessesPage />
       )}
       
       {currentPage === 'rules' && (
@@ -671,7 +643,7 @@ export default function App() {
           onDeleteRule={handleDeleteRule}
           onToggleRule={handleToggleRule}
           onExportRules={handleExportRules}
-          onImportRules={triggerImportRules}
+          onImportRules={handleImportRules}
         />
       )}
       
@@ -853,16 +825,7 @@ export default function App() {
                   <input
                     type="text"
                     value={ruleDraft.operation ?? ''}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      const validOperations = ['read_file', 'write_file', 'http_request', 'database_query', 
-                                               'browser_open', 'send_email', 'exec_command', 'model_request', 
-                                               'model_response'] as const;
-                      const operation = value && validOperations.includes(value as any) 
-                        ? value as typeof validOperations[number] 
-                        : null;
-                      setRuleDraft({ ...ruleDraft, operation });
-                    }}
+                    onChange={(e) => setRuleDraft({ ...ruleDraft, operation: e.target.value || null })}
                     placeholder="exec_command, read_file, etc."
                   />
                 </label>
@@ -961,7 +924,7 @@ export default function App() {
             </header>
             
             <div className="template-list">
-              {ruleTemplates.map((template: { id: string; name: string; description: string }) => (
+              {RULE_TEMPLATES.map((template) => (
                 <button
                   key={template.id}
                   className="template-card"
@@ -969,6 +932,7 @@ export default function App() {
                 >
                   <h3>{template.name}</h3>
                   <p>{template.description}</p>
+                  <span className="template-category">{template.category}</span>
                 </button>
               ))}
             </div>
@@ -977,6 +941,7 @@ export default function App() {
       ) : null}
     </Layout>
   );
+}
 }
 
 function getActiveApproval(
