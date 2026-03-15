@@ -183,6 +183,8 @@ Current end-to-end proof:
 - `cargo test -p agentguard-proxy --test approval_flow`
 - this spins up a mock upstream model API, a local AgentGuard proxy, and a local daemon on the same SQLite control plane
 - it verifies both paths: prompt responses stay pending until operator approval, and approved responses are released cleanly afterward
+- `PYTHONPATH=sdks/python/src python3 -m unittest discover -s sdks/python/tests -v`
+- this verifies the Python SDK follows the same allow, pending-approval, deny, and approval-resolution semantics as the Node wrappers
 
 The most useful contributions right now are:
 

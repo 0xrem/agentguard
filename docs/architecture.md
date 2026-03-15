@@ -165,7 +165,7 @@ The first version should support a narrow but real MVP path before expanding to 
 
 - `apps/desktop`: Tauri UI for alerts, dashboard, approval modals, rules, and audit logs
 - `sdks/node`: TypeScript wrapper for Node-based agents with approval-aware guard calls
-- `sdks/python`: Python wrapper for Python-based agents
+- `sdks/python`: Python wrapper for Python-based agents with approval-aware guard calls
 
 ## Event Flow
 
@@ -219,7 +219,7 @@ Do not optimize for these yet:
 │   └── desktop/
 └── sdks/
     ├── node/
-    └── python/             # planned
+    └── python/
 ```
 
 ## Immediate Implementation Sequence
