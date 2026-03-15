@@ -3,6 +3,10 @@
   "private": true,
   "packageManager": "pnpm@10.32.0",
   "scripts": {
+    "bootstrap:local": "./scripts/bootstrap-local.sh",
+    "stack:up": "./scripts/start-local-stack.sh",
+    "stack:down": "./scripts/stop-local-stack.sh",
+    "demo:live": "./scripts/run-live-demo.sh",
     "desktop:dev": "pnpm --filter @agentguard/desktop tauri dev",
     "desktop:build": "pnpm --filter @agentguard/desktop tauri build"
   }

@@ -103,6 +103,27 @@ It is not trying to be:
 
 If an agent can touch your machine, your data, or your credentials, AgentGuard is relevant.
 
+## Quickstart
+
+The shortest local path is now:
+
+```bash
+pnpm bootstrap:local
+pnpm stack:up
+pnpm demo:live
+pnpm desktop:build
+```
+
+What each command does:
+
+- `pnpm bootstrap:local`: installs JavaScript dependencies, installs the Python SDK in editable mode, and builds the local daemon and proxy binaries
+- `pnpm stack:up`: starts the local daemon and proxy on `http://127.0.0.1:8790` and `http://127.0.0.1:8787`
+- `pnpm demo:live`: runs a real SDK-backed approval demo against that local stack
+- `pnpm desktop:build`: on macOS, produces the desktop app bundle under `target/release/bundle/macos/AgentGuard.app`
+
+If you already have `OPENAI_API_KEY` set, the live demo uses the proxy-backed OpenAI-compatible path.
+If not, it falls back to a harmless local command so you can still verify the real approval loop end to end.
+
 ## Example Policies
 
 ```text

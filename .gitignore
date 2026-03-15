@@ -9,3 +9,5 @@ dist
 .playwright-cli
 apps/desktop/src-tauri/gen
 __pycache__/
+/.agentguard/
+*.egg-info/

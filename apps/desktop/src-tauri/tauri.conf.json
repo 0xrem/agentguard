@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.agentguard.desktop",
   "build": {
-    "beforeDevCommand": "pnpm --dir .. dev",
-    "beforeBuildCommand": "pnpm --dir .. build",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
@@ -26,7 +26,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": ["app"]
   }
 }
-
