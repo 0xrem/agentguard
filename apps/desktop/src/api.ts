@@ -13,11 +13,13 @@ import {
 import type {
   ApprovalRequest,
   AuditRecord,
+  AuditQuery,
   DashboardSnapshot,
   DemoRunResult,
   EnforcementAction,
   ManagedRule,
   PolicyRule,
+  RuleExport,
   RuntimeEnvironment,
   RuntimeStartResult,
   SampleEventKind,
@@ -98,12 +100,44 @@ export async function startLocalStack(): Promise<RuntimeStartResult> {
   return invoke<RuntimeStartResult>("start_local_stack");
 }
 
-export async function runRealAgentDemo(): Promise<DemoRunResult> {
+export async function runRealAgentDemo(mode: "python_sdk" | "openai_proxy"): Promise<DemoRunResult> {
+  console.log("[runRealAgentDemo] Mode:", mode);
+  console.log("[runRealAgentDemo] Is Tauri runtime:", isTauriRuntime());
   if (!isTauriRuntime()) {
-    return mockRunRealAgentDemo();
+    console.log("[runRealAgentDemo] Using mock implementation");
+    return mockRunRealAgentDemo(mode);
   }
 
-  return invoke<DemoRunResult>("run_real_agent_demo");
+  console.log("[runRealAgentDemo] Invoking Tauri command");
+  return invoke<DemoRunResult>("run_real_agent_demo", { mode });
+}
+
+export async function exportRules(): Promise<RuleExport> {
+  if (!isTauriRuntime()) {
+    return {
+      version: "1.0",
+      exported_at: Date.now(),
+      rules: [],
+    };
+  }
+
+  return invoke<RuleExport>("export_policy_rules");
+}
+
+export async function importRules(exportData: RuleExport): Promise<ManagedRule[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+
+  return invoke<ManagedRule[]>("import_policy_rules", { exportData });
+}
+
+export async function queryAuditLogs(query: AuditQuery): Promise<AuditRecord[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+
+  return invoke<AuditRecord[]>("query_audit_logs", { query });
 }
 
 function isTauriRuntime(): boolean {

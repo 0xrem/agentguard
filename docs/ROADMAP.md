@@ -33,11 +33,12 @@
 |------|------|------|
 | **Rust Daemon** | ✅ 完成 | 本地守护进程，事件处理、审批管理 |
 | **Policy Engine** | ✅ 完成 | 规则引擎、风险评估、决策逻辑 |
-| **Desktop App (Tauri)** | ✅ 完成 | 审批弹窗、审计日志、规则管理 |
+| **Desktop App (Tauri)** | ✅ 完成 | 审批弹窗、审计日志、规则管理、**规则模板系统** |
 | **Python SDK** | ✅ 完成 | 文件/命令/HTTP 包装器、OpenAI Agents 集成 |
 | **Proxy Service** | ✅ 完成 | OpenAI API 代理、透明拦截 |
 | **审批流程** | ✅ 完成 | Allow/Deny 完整闭环 |
 | **审计日志** | ✅ 完成 | 本地 SQLite 存储、查询接口 |
+| **规则模板** | ✅ 完成 | 预定义安全策略模板，快速创建规则 |
 
 ### 📦 项目结构
 
@@ -123,6 +124,52 @@ GET  /api/rules/export   # 导出规则
 - 规则立即生效（无需重启 daemon）
 - 导出的规则文件可在其他机器导入
 - 预设模板一键应用
+
+### 📋 规则模板系统（v1.1 新增）
+
+**目标**: 降低用户创建安全策略的门槛，提供开箱即用的最佳实践
+
+**功能清单**:
+- ✅ 模板选择模态框（网格布局展示所有可用模板）
+- ✅ 预定义模板库（5 个常用安全策略模板）
+  - Block shell escape（阻止 Shell 逃逸）
+  - Block network tools（阻止网络工具）
+  - Block file deletion（阻止文件删除）
+  - Warn on env access（环境变量访问警告）
+  - Allow safe reads（允许安全文件读取）
+- ✅ 模板详情展示（名称、描述、优先级、层级、操作类型）
+- ✅ 一键应用模板（自动填充规则编辑器）
+- ✅ 模板自定义（用户可修改模板生成的规则）
+
+**技术实现**:
+```typescript
+// 模板数据结构
+interface RuleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  template: Omit<RuleDraft, "id" | "reason">;
+}
+
+// 模板应用流程
+function handleCreateFromTemplate(templateId: string) {
+  const template = ruleTemplates.find(t => t.id === templateId);
+  setRuleDraft({
+    ...template.template,
+    id: "new",
+    reason: `Created from template: ${template.name}`,
+  });
+  setShowTemplateModal(false);
+  setShowAddRuleModal(true);
+}
+```
+
+**验收标准**:
+- ✅ 用户点击"📋 From template"按钮可打开模板选择器
+- ✅ 模板卡片显示完整信息（名称、描述、优先级、层级）
+- ✅ 选择模板后自动打开规则编辑器并填充字段
+- ✅ 用户可修改模板生成的规则后再保存
+- ✅ 模板功能有完整的文档说明
 
 ---
 

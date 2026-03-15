@@ -277,11 +277,13 @@ export function mockStartLocalStack(): RuntimeStartResult {
   };
 }
 
-export function mockRunRealAgentDemo(): DemoRunResult {
+export function mockRunRealAgentDemo(mode: "python_sdk" | "openai_proxy"): DemoRunResult {
   return {
-    mode: "python_sdk",
+    mode: mode,
     command:
-      "PYTHONPATH=sdks/python/src python3 sdks/python/examples/live_demo_agent.py --daemon-base-url http://127.0.0.1:8790",
+      mode === "python_sdk"
+        ? "PYTHONPATH=sdks/python/src python3 sdks/python/examples/live_demo_agent.py --daemon-base-url http://127.0.0.1:8790"
+        : "PYTHONPATH=sdks/python/src python3 sdks/python/examples/openai_chat_agent.py --daemon-base-url http://127.0.0.1:8790",
     exit_code: 0,
     stdout: "agentguard-live-demo\n",
     stderr: "",

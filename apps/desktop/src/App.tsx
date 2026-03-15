@@ -1,6 +1,8 @@
 import { startTransition, useEffect, useMemo, useState } from "react";
 import {
   deletePolicyRule,
+  exportRules,
+  importRules,
   loadDashboard,
   loadRuntimeEnvironment,
   resolveApprovalRequest,
@@ -16,9 +18,14 @@ import type {
   DashboardSnapshot,
   DemoRunResult,
   EnforcementAction,
+  Event,
+  Layer,
   ManagedRule,
   PolicyRule,
   RiskCounts,
+  RiskLevel,
+  RuleExport,
+  RuleTemplate,
   RuntimeEnvironment,
   RuntimeStartResult,
   SampleEventKind,
@@ -63,6 +70,105 @@ const SAMPLE_SCENARIOS: Array<{
     title: "Record a normal workspace read",
     description:
       "Shows what a low-risk event looks like when an assistant touches an approved project file.",
+  },
+];
+
+const RULE_TEMPLATES: RuleTemplate[] = [
+  {
+    id: "block-destructive-commands",
+    name: "阻止破坏性命令",
+    description: "阻止 rm、sudo 等危险命令的执行",
+    category: "security",
+    rule: {
+      priority: 100,
+      layer: "command",
+      operation: "exec_command",
+      agent: { type: "any" },
+      target: { type: "contains", value: "rm -rf" },
+      minimum_risk: null,
+      action: "block",
+      reason: "阻止破坏性文件删除操作",
+    },
+  },
+  {
+    id: "block-ssh-keys",
+    name: "保护 SSH 密钥",
+    description: "阻止读取 SSH 私钥文件",
+    category: "security",
+    rule: {
+      priority: 90,
+      layer: "tool",
+      operation: "read_file",
+      agent: { type: "any" },
+      target: { type: "contains", value: ".ssh/id_rsa" },
+      minimum_risk: null,
+      action: "block",
+      reason: "保护 SSH 私钥不被泄露",
+    },
+  },
+  {
+    id: "block-secrets",
+    name: "保护敏感凭证",
+    description: "阻止访问 .env、密钥等敏感文件",
+    category: "privacy",
+    rule: {
+      priority: 85,
+      layer: "tool",
+      operation: "read_file",
+      agent: { type: "any" },
+      target: { type: "one_of", value: [".env", ".gitconfig", ".netrc", "credentials"] },
+      minimum_risk: null,
+      action: "block",
+      reason: "防止敏感凭证泄露",
+    },
+  },
+  {
+    id: "ask-external-requests",
+    name: "审批外部请求",
+    description: "对所有外部 HTTP 请求要求审批",
+    category: "security",
+    rule: {
+      priority: 70,
+      layer: "tool",
+      operation: "http_request",
+      agent: { type: "any" },
+      target: { type: "any" },
+      minimum_risk: "medium",
+      action: "ask",
+      reason: "外部网络请求需要用户确认",
+    },
+  },
+  {
+    id: "allow-workspace-reads",
+    name: "允许工作区读取",
+    description: "允许 AI 代理读取当前工作区文件",
+    category: "productivity",
+    rule: {
+      priority: 50,
+      layer: "tool",
+      operation: "read_file",
+      agent: { type: "any" },
+      target: { type: "prefix", value: "/Users/" },
+      minimum_risk: "low",
+      action: "allow",
+      reason: "工作区内文件读取是安全的",
+    },
+  },
+  {
+    id: "block-database-writes",
+    name: "阻止数据库写入",
+    description: "阻止未经授权的数据库修改操作",
+    category: "compliance",
+    rule: {
+      priority: 80,
+      layer: "tool",
+      operation: "database_query",
+      agent: { type: "any" },
+      target: { type: "any" },
+      minimum_risk: "medium",
+      action: "ask",
+      reason: "数据库写入操作需要审批",
+    },
   },
 ];
 
@@ -114,6 +220,16 @@ export default function App() {
   const [savingRule, setSavingRule] = useState(false);
   const [togglingRuleId, setTogglingRuleId] = useState<string | null>(null);
   const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
+  const [exportingRules, setExportingRules] = useState(false);
+  const [importingRules, setImportingRules] = useState(false);
+  const [showAddRuleModal, setShowAddRuleModal] = useState(false);
+  const [showRuleEditorModal, setShowRuleEditorModal] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [auditSearchQuery, setAuditSearchQuery] = useState("");
+  const [auditFilterLayer, setAuditFilterLayer] = useState<Layer | "all">("all");
+  const [auditFilterAction, setAuditFilterAction] = useState<EnforcementAction | "all">("all");
+  const [auditFilterRisk, setAuditFilterRisk] = useState<RiskLevel | "all">("all");
 
   useEffect(() => {
     void refreshDashboard(true);
@@ -289,13 +405,17 @@ export default function App() {
   }
 
   async function handleRunRealDemo() {
+    console.log("[handleRunRealDemo] Starting...");
     setRunningDemo(true);
     try {
-      const result = await runRealAgentDemo();
+      console.log("[handleRunRealDemo] Calling runRealAgentDemo...");
+      const result = await runRealAgentDemo("python_sdk");
+      console.log("[handleRunRealDemo] Result:", result);
       setDemoResult(result);
       setError(null);
       await refreshDashboard(false);
     } catch (demoError) {
+      console.error("[handleRunRealDemo] Error:", demoError);
       setError(getErrorMessage(demoError));
     } finally {
       setRunningDemo(false);
@@ -312,6 +432,7 @@ export default function App() {
       await savePolicyRule(policyRuleFromDraft(ruleDraft));
       setEditingRuleId(null);
       setRuleDraft(null);
+      setShowRuleEditorModal(false);
       setError(null);
       await refreshDashboard(false);
     } catch (ruleError) {
@@ -351,10 +472,215 @@ export default function App() {
     }
   }
 
+  async function handleExportRules() {
+    setExportingRules(true);
+    try {
+      const exportData = await exportRules();
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `agentguard-rules-${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setError(null);
+    } catch (exportError) {
+      setError(getErrorMessage(exportError));
+    } finally {
+      setExportingRules(false);
+    }
+  }
+
+  async function handleImportRules(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setImportingRules(true);
+    try {
+      const text = await file.text();
+      const exportData = JSON.parse(text) as RuleExport;
+      if (!exportData.version || !Array.isArray(exportData.rules)) {
+        throw new Error("Invalid rule export file format");
+      }
+      await importRules(exportData);
+      setError(null);
+      await refreshDashboard(false);
+    } catch (importError) {
+      setError(getErrorMessage(importError));
+    } finally {
+      setImportingRules(false);
+      event.target.value = "";
+    }
+  }
+
+  function handleAddNewRule() {
+    setRuleDraft({
+      id: "new",
+      action: "allow",
+      priority: 100,
+      layer: null,
+      operation: null,
+      minimum_risk: null,
+      agent_value: "*",
+      target_value: "*",
+      reason: "",
+    });
+    setEditingRuleId(null);
+    setShowAddRuleModal(true);
+  }
+
   function handleEditRule(rule: ManagedRule) {
     setEditingRuleId(rule.id);
     setRuleDraft(ruleDraftFromManagedRule(rule));
+    setShowRuleEditorModal(true);
   }
+
+  /**
+   * Rule templates - pre-configured rule patterns for common security policies
+   * Each template provides a starting point for creating rules without writing from scratch
+   * Users can select a template and customize the details in the rule editor
+   */
+  const ruleTemplates: Array<{
+    id: string;
+    name: string;
+    description: string;
+    template: Omit<RuleDraft, "id" | "reason">;
+  }> = [
+    {
+      id: "block-shell-escape",
+      name: "Block shell escape",
+      description: "Block any attempt to escape to shell via bash, sh, zsh, etc.",
+      template: {
+        action: "block",
+        priority: 900,
+        layer: "command",
+        operation: "exec_command",
+        minimum_risk: "low",
+        agent_value: "*",
+        target_value: "*",
+      },
+    },
+    {
+      id: "block-network-tools",
+      name: "Block network tools",
+      description: "Block curl, wget, and other network utilities",
+      template: {
+        action: "block",
+        priority: 850,
+        layer: "command",
+        operation: "exec_command",
+        minimum_risk: "medium",
+        agent_value: "*",
+        target_value: "curl|wget|nc|netcat",
+      },
+    },
+    {
+      id: "block-file-deletion",
+      name: "Block file deletion",
+      description: "Block rm -rf and dangerous file operations",
+      template: {
+        action: "block",
+        priority: 950,
+        layer: "command",
+        operation: "exec_command",
+        minimum_risk: "high",
+        agent_value: "*",
+        target_value: "rm\\s+(-[rf]+\\s+)?(/|~|$)",
+      },
+    },
+    {
+      id: "warn-on-env-access",
+      name: "Warn on environment access",
+      description: "Warn when agent tries to read environment variables",
+      template: {
+        action: "block",
+        priority: 500,
+        layer: "tool",
+        operation: "exec_command",
+        minimum_risk: "low",
+        agent_value: "*",
+        target_value: "*",
+      },
+    },
+    {
+      id: "allow-safe-reads",
+      name: "Allow safe file reads",
+      description: "Allow reading files in project directory",
+      template: {
+        action: "allow",
+        priority: 200,
+        layer: "tool",
+        operation: "read_file",
+        minimum_risk: null,
+        agent_value: "*",
+        target_value: "^(?!/|~|/etc|/var).*$",
+      },
+    },
+  ];
+
+  /**
+   * Handle creating a new rule from a selected template
+   * Opens the rule editor with pre-filled values from the template
+   */
+  function handleCreateFromTemplate(templateId: string) {
+    const template = ruleTemplates.find((t) => t.id === templateId);
+    if (!template) return;
+    
+    setRuleDraft({
+      ...template.template,
+      id: "new",
+      reason: `Created from template: ${template.name}`,
+    });
+    setEditingRuleId(null);
+    setSelectedTemplateId(null);
+    setShowTemplateModal(false);
+    setShowAddRuleModal(true);
+  }
+
+  const filteredAuditRecords = useMemo(() => {
+    if (!snapshot) return [];
+    
+    return snapshot.records.filter((record) => {
+      // Search query filter
+      if (auditSearchQuery) {
+        const query = auditSearchQuery.toLowerCase();
+        const searchText = [
+          record.event.agent.name,
+          record.event.operation,
+          record.event.layer,
+          record.decision.reason,
+          JSON.stringify(record.event.metadata),
+        ]
+          .join(" ")
+          .toLowerCase();
+        
+        if (!searchText.includes(query)) {
+          return false;
+        }
+      }
+      
+      // Layer filter
+      if (auditFilterLayer !== "all" && record.event.layer !== auditFilterLayer) {
+        return false;
+      }
+      
+      // Action filter
+      if (auditFilterAction !== "all" && record.decision.action !== auditFilterAction) {
+        return false;
+      }
+      
+      // Risk filter
+      if (auditFilterRisk !== "all" && record.decision.risk !== auditFilterRisk) {
+        return false;
+      }
+      
+      return true;
+    });
+  }, [snapshot, auditSearchQuery, auditFilterLayer, auditFilterAction, auditFilterRisk]);
 
   const riskCards = useMemo(() => {
     const counts = snapshot?.counts ?? EMPTY_COUNTS;
@@ -616,11 +942,74 @@ export default function App() {
               <p className="eyebrow">Audit stream</p>
               <h2>Recent runtime decisions</h2>
             </div>
+            
+            <div className="audit-filters">
+              <input
+                type="text"
+                className="audit-search-input"
+                placeholder="Search agent, operation, metadata..."
+                value={auditSearchQuery}
+                onChange={(e) => setAuditSearchQuery(e.target.value)}
+              />
+              
+              <div className="audit-filter-group">
+                <select
+                  className="audit-filter-select"
+                  value={auditFilterLayer}
+                  onChange={(e) => setAuditFilterLayer(e.target.value as Layer | "all")}
+                >
+                  <option value="all">All Layers</option>
+                  <option value="tool">Tool</option>
+                  <option value="command">Command</option>
+                  <option value="model">Model</option>
+                  <option value="any">Any</option>
+                </select>
+                
+                <select
+                  className="audit-filter-select"
+                  value={auditFilterAction}
+                  onChange={(e) => setAuditFilterAction(e.target.value as EnforcementAction | "all")}
+                >
+                  <option value="all">All Actions</option>
+                  <option value="allow">Allow</option>
+                  <option value="warn">Warn</option>
+                  <option value="ask">Ask</option>
+                  <option value="block">Block</option>
+                  <option value="kill">Kill</option>
+                </select>
+                
+                <select
+                  className="audit-filter-select"
+                  value={auditFilterRisk}
+                  onChange={(e) => setAuditFilterRisk(e.target.value as RiskLevel | "all")}
+                >
+                  <option value="all">All Risk Levels</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+                
+                <button
+                  className="button button-ghost"
+                  type="button"
+                  onClick={() => {
+                    setAuditSearchQuery("");
+                    setAuditFilterLayer("all");
+                    setAuditFilterAction("all");
+                    setAuditFilterRisk("all");
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            </div>
+            
             {loading ? (
               <p className="empty-state">Loading daemon activity...</p>
-            ) : snapshot && snapshot.records.length > 0 ? (
+            ) : filteredAuditRecords.length > 0 ? (
               <div className="timeline">
-                {snapshot.records.map((record) => (
+                {snapshot?.records.map((record) => (
                   <article key={record.id} className="timeline-row">
                     <div className="timeline-pin" />
                     <div className="timeline-content">
@@ -671,6 +1060,10 @@ export default function App() {
                   </article>
                 ))}
               </div>
+            ) : snapshot && snapshot.records.length > 0 ? (
+              <p className="empty-state">
+                No records match your current filters. Try adjusting the search or filters.
+              </p>
             ) : (
               <p className="empty-state">
                 No audit records yet. Run the daemon and fire a scenario to populate the timeline.
@@ -729,6 +1122,43 @@ export default function App() {
               <div className="section-heading section-heading-compact">
                 <p className="eyebrow">Remembered rules</p>
                 <h2>What the daemon has learned locally</h2>
+              </div>
+              <div className="rule-list-toolbar">
+                <button
+                  className="button button-ghost"
+                  type="button"
+                  onClick={() => setShowTemplateModal(true)}
+                  title="Create rule from template"
+                >
+                  📋 From template
+                </button>
+                <button
+                  className="button button-ghost"
+                  type="button"
+                  onClick={handleAddNewRule}
+                  title="Add a new rule"
+                >
+                  + Add rule
+                </button>
+                <button
+                  className="button button-ghost"
+                  type="button"
+                  onClick={handleExportRules}
+                  disabled={exportingRules}
+                  title="Export rules to JSON file"
+                >
+                  {exportingRules ? "Exporting..." : "Export"}
+                </button>
+                <label className="button button-ghost" style={{ cursor: "pointer" }}>
+                  {importingRules ? "Importing..." : "Import"}
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleImportRules}
+                    disabled={importingRules}
+                    style={{ display: "none" }}
+                  />
+                </label>
               </div>
               {rememberedRules.length > 0 ? (
                 <div className="remembered-rule-list">
@@ -798,154 +1228,253 @@ export default function App() {
                   as a local rule.
                 </p>
               )}
-              {editingRule && ruleDraft ? (
-                <div className="rule-editor">
-                  <div className="remembered-rule-header">
-                    <span className="scenario-eyebrow">Editing rule</span>
-                    <span className="rule-priority">{editingRule.id}</span>
-                  </div>
-                  <div className="rule-editor-grid">
-                    <label className="rule-editor-field">
-                      <span>Reason</span>
-                      <textarea
-                        value={ruleDraft.reason}
-                        onChange={(event) =>
-                          setRuleDraft({ ...ruleDraft, reason: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Action</span>
-                      <select
-                        value={ruleDraft.action}
-                        onChange={(event) =>
-                          setRuleDraft({
-                            ...ruleDraft,
-                            action: event.target.value as RuleDraft["action"],
-                          })
-                        }
-                      >
-                        <option value="allow">allow</option>
-                        <option value="block">block</option>
-                      </select>
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Priority</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={ruleDraft.priority}
-                        onChange={(event) =>
-                          setRuleDraft({
-                            ...ruleDraft,
-                            priority: Number(event.target.value) || 100,
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Minimum Risk</span>
-                      <select
-                        value={ruleDraft.minimum_risk ?? "any"}
-                        onChange={(event) =>
-                          setRuleDraft({
-                            ...ruleDraft,
-                            minimum_risk:
-                              event.target.value === "any"
-                                ? null
-                                : (event.target.value as RuleDraft["minimum_risk"]),
-                          })
-                        }
-                      >
-                        <option value="any">any</option>
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                        <option value="critical">critical</option>
-                      </select>
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Layer</span>
-                      <select
-                        value={ruleDraft.layer ?? "any"}
-                        onChange={(event) =>
-                          setRuleDraft({
-                            ...ruleDraft,
-                            layer:
-                              event.target.value === "any"
-                                ? null
-                                : (event.target.value as RuleDraft["layer"]),
-                          })
-                        }
-                      >
-                        <option value="any">any</option>
-                        <option value="tool">tool</option>
-                        <option value="command">command</option>
-                        <option value="prompt">prompt</option>
-                      </select>
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Operation</span>
-                      <input
-                        value={ruleDraft.operation ?? ""}
-                        placeholder="read_file, exec_command, model_response..."
-                        onChange={(event) =>
-                          setRuleDraft({
-                            ...ruleDraft,
-                            operation:
-                              event.target.value.trim() === ""
-                                ? null
-                                : (event.target.value as RuleDraft["operation"]),
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Agent Match</span>
-                      <input
-                        value={ruleDraft.agent_value}
-                        onChange={(event) =>
-                          setRuleDraft({ ...ruleDraft, agent_value: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label className="rule-editor-field">
-                      <span>Target Match</span>
-                      <input
-                        value={ruleDraft.target_value}
-                        onChange={(event) =>
-                          setRuleDraft({ ...ruleDraft, target_value: event.target.value })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="rule-actions">
-                    <button
-                      className="button button-ghost button-inline"
-                      type="button"
-                      onClick={() => {
-                        setEditingRuleId(null);
-                        setRuleDraft(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      className="button button-primary button-inline"
-                      type="button"
-                      onClick={() => void handleSaveRuleEdit()}
-                      disabled={savingRule}
-                    >
-                      {savingRule ? "Saving..." : "Save rule"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
             </div>
           </div>
         </section>
       </main>
+
+      {showTemplateModal ? (
+        <div className="approval-modal-scrim" onClick={() => setShowTemplateModal(false)}>
+          <section 
+            className="approval-modal card" 
+            aria-modal="true" 
+            role="dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="approval-modal-header">
+              <div className="approval-modal-title-group">
+                <p className="eyebrow">Create from template</p>
+                <h2>Choose a rule template</h2>
+              </div>
+              <div className="approval-modal-header-actions">
+                <button
+                  className="button button-ghost button-icon"
+                  type="button"
+                  onClick={() => setShowTemplateModal(false)}
+                  title="Close"
+                  aria-label="Close template selector"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="template-grid" style={{ display: 'grid', gap: '12px', padding: '20px 0' }}>
+              {ruleTemplates.map((template) => (
+                <div
+                  key={template.id}
+                  className="template-card"
+                  style={{
+                    padding: '16px',
+                    border: '1px solid rgba(24, 35, 50, 0.08)',
+                    borderRadius: '12px',
+                    background: 'rgba(255, 255, 255, 0.72)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onClick={() => handleCreateFromTemplate(template.id)}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 8px 24px rgba(24, 35, 50, 0.12)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = '';
+                    e.currentTarget.style.boxShadow = '';
+                  }}
+                >
+                  <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem' }}>{template.name}</h3>
+                  <p style={{ margin: 0, color: '#677486', fontSize: '0.9rem' }}>{template.description}</p>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                    <span className={`decision-chip ${template.template.action}`} style={{ fontSize: '0.76rem', padding: '4px 8px' }}>
+                      {template.template.action}
+                    </span>
+                    <span style={{ fontSize: '0.76rem', color: '#677486' }}>
+                      Priority: {template.template.priority}
+                    </span>
+                    <span style={{ fontSize: '0.76rem', color: '#677486' }}>
+                      Layer: {template.template.layer}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="approval-actions">
+              <button
+                className="button button-ghost"
+                type="button"
+                onClick={() => setShowTemplateModal(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {showRuleEditorModal && ruleDraft ? (
+        <div className="approval-modal-scrim" onClick={() => setShowRuleEditorModal(false)}>
+          <section 
+            className="approval-modal card" 
+            aria-modal="true" 
+            role="dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="approval-modal-header">
+              <div className="approval-modal-title-group">
+                <p className="eyebrow">Editing rule</p>
+                <h2>Edit rule {editingRuleId}</h2>
+              </div>
+              <div className="approval-modal-header-actions">
+                <button
+                  className="button button-ghost button-icon"
+                  type="button"
+                  onClick={() => setShowRuleEditorModal(false)}
+                  title="Close"
+                  aria-label="Close rule editor"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="rule-editor-grid">
+              <label className="rule-editor-field">
+                <span>Reason</span>
+                <textarea
+                  value={ruleDraft.reason}
+                  onChange={(event) =>
+                    setRuleDraft({ ...ruleDraft, reason: event.target.value })
+                  }
+                />
+              </label>
+              <label className="rule-editor-field">
+                <span>Action</span>
+                <select
+                  value={ruleDraft.action}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      action: event.target.value as RuleDraft["action"],
+                    })
+                  }
+                >
+                  <option value="allow">allow</option>
+                  <option value="block">block</option>
+                </select>
+              </label>
+              <label className="rule-editor-field">
+                <span>Priority</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={ruleDraft.priority}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      priority: Number(event.target.value) || 100,
+                    })
+                  }
+                />
+              </label>
+              <label className="rule-editor-field">
+                <span>Minimum Risk</span>
+                <select
+                  value={ruleDraft.minimum_risk ?? "any"}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      minimum_risk:
+                        event.target.value === "any"
+                          ? null
+                          : (event.target.value as RuleDraft["minimum_risk"]),
+                    })
+                  }
+                >
+                  <option value="any">any</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="critical">critical</option>
+                </select>
+              </label>
+              <label className="rule-editor-field">
+                <span>Layer</span>
+                <select
+                  value={ruleDraft.layer ?? "any"}
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      layer:
+                        event.target.value === "any"
+                          ? null
+                          : (event.target.value as RuleDraft["layer"]),
+                    })
+                  }
+                >
+                  <option value="any">any</option>
+                  <option value="tool">tool</option>
+                  <option value="command">command</option>
+                  <option value="prompt">prompt</option>
+                </select>
+              </label>
+              <label className="rule-editor-field">
+                <span>Operation</span>
+                <input
+                  value={ruleDraft.operation ?? ""}
+                  placeholder="read_file, exec_command, model_response..."
+                  onChange={(event) =>
+                    setRuleDraft({
+                      ...ruleDraft,
+                      operation:
+                        event.target.value.trim() === ""
+                          ? null
+                          : (event.target.value as RuleDraft["operation"]),
+                    })
+                  }
+                />
+              </label>
+              <label className="rule-editor-field">
+                <span>Agent Match</span>
+                <input
+                  value={ruleDraft.agent_value}
+                  onChange={(event) =>
+                    setRuleDraft({ ...ruleDraft, agent_value: event.target.value })
+                  }
+                />
+              </label>
+              <label className="rule-editor-field">
+                <span>Target Match</span>
+                <input
+                  value={ruleDraft.target_value}
+                  onChange={(event) =>
+                    setRuleDraft({ ...ruleDraft, target_value: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="rule-actions">
+              <button
+                className="button button-ghost button-inline"
+                type="button"
+                onClick={() => setShowRuleEditorModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="button button-primary button-inline"
+                type="button"
+                onClick={() => void handleSaveRuleEdit()}
+                disabled={savingRule}
+              >
+                {savingRule ? "Saving..." : "Save rule"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {activeApproval ? (
         <div className="approval-modal-scrim" onClick={() => void handleCloseApprovalModal()}>
@@ -1085,7 +1614,13 @@ function getActiveApproval(
     return null;
   }
 
-  return approvals.find((approval) => approval.id === activeApprovalId) ?? approvals[0];
+  // Only return an approval if activeApprovalId is set and matches an approval
+  // This allows the user to dismiss the modal without resolving the approval
+  if (activeApprovalId === null) {
+    return null;
+  }
+
+  return approvals.find((approval) => approval.id === activeApprovalId) ?? null;
 }
 
 function formatTime(unixMs: number): string {

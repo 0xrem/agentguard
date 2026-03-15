@@ -247,11 +247,27 @@ From `apps/desktop`, the control room can now:
 - surface the same approval request in the native desktop queue
 - remember, edit, disable, and delete local approval-derived rules after a decision
 - prefer bundled runtime assets when launched from an installed desktop app, with workspace fallbacks for development builds
+- **create rules from pre-built templates** for common security policies
 
 If `OPENAI_API_KEY` is present, the desktop runs the OpenAI-compatible proxy demo path.
 If it is not present, the desktop falls back to `sdks/python/examples/live_demo_agent.py`, which still exercises the real daemon approval flow with a harmless local command.
 
 Recent audit entries and approval dialogs also include richer process context, including PID, executable path, and working directory when the caller can provide them.
+
+### Rule Templates
+
+The desktop now includes a **rule template system** to help you quickly create common security policies:
+
+- **📋 From template** button in the rules toolbar
+- Pre-built templates for:
+  - Block shell escape attempts (`bash`, `sh`, `zsh`, etc.)
+  - Block network tools (`curl`, `wget`, `nc`, etc.)
+  - Block dangerous file deletion (`rm -rf`, etc.)
+  - Warn on environment variable access
+  - Allow safe file reads in project directories
+- Select a template → customize the details → save as a new rule
+
+This makes it much faster to establish baseline security policies without writing rules from scratch.
 
 ## Why This Project Matters
 

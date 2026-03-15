@@ -1,6 +1,7 @@
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type EnforcementAction = "allow" | "warn" | "ask" | "block" | "kill";
 export type ApprovalStatus = "pending" | "approved" | "denied" | "killed" | "expired";
+export type Layer = "prompt" | "tool" | "command";
 
 export interface AgentIdentity {
   name: string;
@@ -104,6 +105,14 @@ export interface RuntimeEnvironment {
   message: string;
 }
 
+export interface RuleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: "security" | "privacy" | "productivity" | "compliance";
+  rule: Omit<PolicyRule, "id">;
+}
+
 export interface DemoRunResult {
   mode: "python_sdk" | "openai_proxy";
   command: string;
@@ -166,3 +175,27 @@ export type SampleEventKind =
   | "blocked_command"
   | "prompt_injection"
   | "sensitive_secret_read";
+
+export interface RulePreset {
+  id: string;
+  name: string;
+  description: string;
+  rules: PolicyRule[];
+}
+
+export interface RuleExport {
+  version: string;
+  exported_at: number;
+  rules: PolicyRule[];
+}
+
+export interface AuditQuery {
+  agent_name?: string;
+  operation?: string;
+  action?: string;
+  risk_level?: string;
+  start_time?: number;
+  end_time?: number;
+  limit?: number;
+  offset?: number;
+}
