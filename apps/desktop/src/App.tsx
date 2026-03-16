@@ -526,16 +526,28 @@ export default function App() {
     setActiveApprovalId(null);
   }
 
-  async function handleStartLocalStack(): Promise<RuntimeStartResult | null> {
+  async function handleStartLocalStack(
+    options: { silent?: boolean; retries?: number } = {},
+  ): Promise<RuntimeStartResult | null> {
+    const { silent = false, retries = 2 } = options;
+
     setStartingStack(true);
     try {
-      const result = await startLocalStack();
+      const result = await retryWithBackoff(
+        () => startLocalStack(),
+        retries,
+        700,
+      );
       setStackResult(result);
-      setError(null);
+      if (!silent) {
+        setError(null);
+      }
       await refreshDashboard(false);
       return result;
     } catch (stackError) {
-      setError(getErrorMessage(stackError));
+      if (!silent) {
+        setError(classifyRuntimeError(getErrorMessage(stackError), "stack"));
+      }
       return null;
     } finally {
       setStartingStack(false);
@@ -581,18 +593,27 @@ export default function App() {
   }
 
   async function handleRunRealDemo() {
-    console.log("[handleRunRealDemo] Starting...");
     setRunningDemo(true);
     try {
-      console.log("[handleRunRealDemo] Calling runRealAgentDemo...");
-      const result = await runRealAgentDemo("python_sdk");
-      console.log("[handleRunRealDemo] Result:", result);
+      const runtimeReady = Boolean(runtimeEnvironment?.daemon_source) && Boolean(runtimeEnvironment?.proxy_source);
+      if (!runtimeReady) {
+        const stackResult = await handleStartLocalStack({ silent: true, retries: 2 });
+        if (!stackResult) {
+          throw new Error("failed to start local stack before running demo");
+        }
+      }
+
+      const result = await retryWithBackoff(
+        () => runRealAgentDemo("python_sdk"),
+        2,
+        900,
+      );
+
       setDemoResult(result);
       setError(null);
       await refreshDashboard(false);
     } catch (demoError) {
-      console.error("[handleRunRealDemo] Error:", demoError);
-      setError(getErrorMessage(demoError));
+      setError(classifyRuntimeError(getErrorMessage(demoError), "demo"));
     } finally {
       setRunningDemo(false);
     }
@@ -1614,6 +1635,54 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "Unknown desktop error";
+}
+
+async function retryWithBackoff<T>(
+  task: () => Promise<T>,
+  retries: number,
+  delayMs: number,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) {
+        break;
+      }
+      await sleep(delayMs * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function classifyRuntimeError(message: string, phase: "stack" | "demo"): string {
+  const text = message.toLowerCase();
+
+  if (text.includes("timed out") || text.includes("timeout")) {
+    return phase === "demo"
+      ? "Demo 执行超时：通常是本地栈刚启动未完全就绪。请 3-5 秒后重试，或先点击 Start Stack。"
+      : "本地栈启动超时：请检查 8790/8787 端口占用，或停止旧进程后重试。";
+  }
+
+  if (text.includes("connection") || text.includes("refused") || text.includes("unreachable")) {
+    return phase === "demo"
+      ? "Demo 无法连接到本地服务：请确认 Daemon/Proxy 在线后再运行。"
+      : "无法连接到本地运行时：请确认网络回环地址可用并重试。";
+  }
+
+  if (text.includes("openai") || text.includes("api key") || text.includes("auth")) {
+    return "Demo 鉴权配置可能不完整：请在 Setup 中检查代理地址/API Key 配置。";
+  }
+
+  return message;
 }
 
 function buildProtectionAlertId(alert: {

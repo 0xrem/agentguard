@@ -49,7 +49,8 @@ These capabilities exist but are not yet production-strong:
   - still heuristic, not full system attribution
 - real demo reliability:
   - core flow works
-  - occasional timeout still happens during demo runs
+  - desktop now includes auto-start + retry + clearer runtime failure hints
+  - still needs more deterministic readiness probes and cross-machine soak validation
 
 ## What Is Not Implemented Yet
 
@@ -74,9 +75,10 @@ See docs/REALITY_CHECKLIST.md for the manual verification checklist.
 
 ## Near-Term Priority Order
 
-1. Demo reliability and clearer failure handling
-2. Coverage proof:
+1. Coverage proof:
    show which active agent processes are actually protected
+2. Demo reliability soak and readiness hardening:
+  reduce residual timeout variance across environments
 3. More direct framework coverage:
    Claude Code and Cursor first
 4. Policy UX hardening:
