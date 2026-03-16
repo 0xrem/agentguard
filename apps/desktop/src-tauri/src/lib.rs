@@ -465,7 +465,7 @@ async fn list_runtime_processes(
     }
 
     let output = Command::new("ps")
-        .args(["-axo", "pid,user,state,pcpu,rss,etime,comm,args"]) // macOS compatible
+        .args(["-axo", "pid,user,state,pcpu,rss,etime,thcount,comm,args"]) // macOS compatible
         .output()
         .map_err(|error| format!("failed to run ps: {error}"))?;
 
@@ -503,6 +503,10 @@ async fn list_runtime_processes(
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(0.0);
         let elapsed = parts.next().unwrap_or("00:00");
+        let threads = parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
         let comm = parts.next().unwrap_or("");
         let command_rest = parts.collect::<Vec<_>>().join(" ");
 
@@ -531,7 +535,7 @@ async fn list_runtime_processes(
             uptime,
             command,
             user,
-            threads: 0,
+            threads,
             open_files: 0,
         });
     }
@@ -545,7 +549,37 @@ async fn list_runtime_processes(
     });
     processes.truncate(limit);
 
+    for process in &mut processes {
+        let (open_files, network_sockets) = collect_process_lsof_metrics(process.pid);
+        process.open_files = open_files;
+        process.network = network_sockets;
+    }
+
     Ok(processes)
+}
+
+fn collect_process_lsof_metrics(pid: u32) -> (u32, u64) {
+    let pid_string = pid.to_string();
+
+    let open_files = Command::new("lsof")
+        .args(["-nP", "-p", pid_string.as_str()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| stdout.lines().skip(1).count() as u32)
+        .unwrap_or(0);
+
+    let network_sockets = Command::new("lsof")
+        .args(["-nP", "-i", "-a", "-p", pid_string.as_str()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| stdout.lines().skip(1).count() as u64)
+        .unwrap_or(0);
+
+    (open_files, network_sockets)
 }
 
 fn map_ps_state(state: &str) -> String {

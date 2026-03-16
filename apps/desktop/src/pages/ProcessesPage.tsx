@@ -108,7 +108,7 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                     style={{ width: `${Math.min(100, process.network / 50)}%` }}
                   ></div>
                 </div>
-                <div className="metric-value">{process.network} KB/s</div>
+                <div className="metric-value">{process.network} sockets</div>
               </div>
             </div>
 
@@ -188,8 +188,8 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                   </div>
                   <div className="resource-card">
                     <div className="resource-icon">🌐</div>
-                    <div className="resource-value">{selectedProcess.network} KB/s</div>
-                    <div className="resource-label">Network</div>
+                    <div className="resource-value">{selectedProcess.network} sockets</div>
+                    <div className="resource-label">Network Sockets</div>
                   </div>
                   <div className="resource-card">
                     <div className="resource-icon">📁</div>

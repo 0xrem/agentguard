@@ -7,6 +7,7 @@
     "stack:up": "./scripts/start-local-stack.sh",
     "stack:down": "./scripts/stop-local-stack.sh",
     "demo:live": "./scripts/run-live-demo.sh",
+    "verify:reality": "./scripts/verify-reality.sh",
     "desktop:dev": "pnpm --filter @agentguard/desktop tauri dev",
     "desktop:build": "pnpm --filter @agentguard/desktop tauri build",
     "release:verify": "./scripts/release/verify-macos-app.sh",
