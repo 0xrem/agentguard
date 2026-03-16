@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   mockDeletePolicyRule,
   mockDashboard,
+  mockLoadProcesses,
   mockLoadRuntimeEnvironment,
+  mockQueryAuditLogs,
   mockResolveApprovalRequest,
   mockSavePolicyRule,
   mockSetPolicyRuleEnabled,
@@ -21,6 +23,7 @@ import type {
   PolicyRule,
   RuleExport,
   RuntimeEnvironment,
+  RuntimeProcessInfo,
   RuntimeStartResult,
   SampleEventKind,
 } from "./types";
@@ -39,6 +42,14 @@ export async function loadRuntimeEnvironment(): Promise<RuntimeEnvironment> {
   }
 
   return invoke<RuntimeEnvironment>("load_runtime_environment");
+}
+
+export async function loadProcesses(limit = 80): Promise<RuntimeProcessInfo[]> {
+  if (!isTauriRuntime()) {
+    return mockLoadProcesses(limit);
+  }
+
+  return invoke<RuntimeProcessInfo[]>("list_runtime_processes", { limit });
 }
 
 export async function submitSampleEvent(kind: SampleEventKind): Promise<AuditRecord> {
@@ -134,7 +145,7 @@ export async function importRules(exportData: RuleExport): Promise<ManagedRule[]
 
 export async function queryAuditLogs(query: AuditQuery): Promise<AuditRecord[]> {
   if (!isTauriRuntime()) {
-    return [];
+    return mockQueryAuditLogs(query);
   }
 
   return invoke<AuditRecord[]>("query_audit_logs", { query });

@@ -2,8 +2,26 @@
 
 本文档记录 AgentGuard 的产品规划、技术路线和开发优先级，确保开发者和 AI 协作者理解项目方向，避免偏离主线。
 
-**最后更新**: 2026-03-15  
+**最后更新**: 2026-03-16  
 **当前版本**: 1.0.0 MVP
+
+### 2026-03 决策补充（协作者必读）
+
+- 产品定位从“SDK 优先”调整为“防火墙体验优先”：默认目标是接近杀毒软件的开箱即用感。
+- 短期主线是 **Proxy 零配置接入 + 真实可见性**，而不是继续扩展 SDK 表层功能。
+- 任何新功能若不能提升“无需改业务代码即可受保护”的比例，优先级降低。
+
+#### 近期执行顺序（按优先级）
+
+1. 一键 Proxy Setup 向导（已完成，持续优化）
+2. 进程页改造为真实系统进程数据（进行中）
+3. 未受保护会话检测与告警（例如常见 Agent 进程未走代理）
+4. 默认开机拉起本地守护进程与代理，减少手工步骤
+
+#### 范围说明（避免误解）
+
+- 当前“自动阻断/审批/告警”仅覆盖已接入 AgentGuard 的流量与事件。
+- 当前版本还不是系统级全量监控（非 Endpoint Security 级别），但每个迭代都应向“更少配置、更高覆盖”靠拢。
 
 ---
 
@@ -52,7 +70,7 @@ agentguard/
 ├── apps/desktop/               # Tauri 桌面应用
 ├── sdks/
 │   ├── python/                 # Python SDK
-│   └── node/                   # Node.js SDK (TODO)
+│   └── node/                   # Node.js SDK（核心能力已完成）
 └── docs/                       # 文档
 ```
 
@@ -218,14 +236,16 @@ impl AuditStore {
 
 **目标**: 覆盖 Node.js 生态的 Agent 开发者
 
+**当前状态（2026-03）**: 核心能力已完成（client + 文件/命令/HTTP 包装器 + 类型与错误模型），后续补齐浏览器包装器与更多生态集成。
+
 **功能清单**:
-- [ ] 基础客户端（与 Python SDK 对等的 API）
-- [ ] 文件操作包装器（`guardedReadFile`, `guardedWriteFile`）
-- [ ] 命令执行包装器（`guardedExecCommand`）
-- [ ] HTTP 请求包装器（`guardedFetch`）
+- [x] 基础客户端（与 Python SDK 对等的 API）
+- [x] 文件操作包装器（`guardedReadFile`, `guardedWriteFile`）
+- [x] 命令执行包装器（`guardedExecCommand`）
+- [x] HTTP 请求包装器（`guardedFetch`）
 - [ ] 浏览器操作包装器（`guardedBrowserOpen`）
 - [ ] OpenAI Agents SDK 集成
-- [ ] 自动 Agent 身份识别（从进程上下文推断）
+- [x] 自动 Agent 身份识别（从进程上下文推断）
 
 **技术实现**:
 ```typescript

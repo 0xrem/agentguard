@@ -12,7 +12,7 @@ use agentguard_models::{
     ResolveApprovalRequest, Rule,
 };
 use agentguard_policy::{PolicyEngine, default_rules};
-use agentguard_store::{AuditStore, StoreError};
+use agentguard_store::{AuditRecordQuery, AuditStore, StoreError};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -94,6 +94,10 @@ impl AgentGuardDaemon {
 
     pub fn recent_audit_records(&self, limit: usize) -> Result<Vec<AuditRecord>> {
         self.store.recent_audit_records(limit).map_err(Into::into)
+    }
+
+    pub fn query_audit_records(&self, query: &AuditRecordQuery) -> Result<Vec<AuditRecord>> {
+        self.store.query_audit_records(query).map_err(Into::into)
     }
 
     pub fn list_approval_requests(
@@ -340,7 +344,15 @@ impl IntoResponse for DaemonApiError {
 
 #[derive(Debug, Default, Deserialize)]
 struct RecentAuditQuery {
+    layer: Option<String>,
+    agent_name: Option<String>,
+    operation: Option<String>,
+    action: Option<String>,
+    risk_level: Option<String>,
+    start_time: Option<i64>,
+    end_time: Option<i64>,
     limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -437,11 +449,23 @@ async fn list_audit_records(
     Query(query): Query<RecentAuditQuery>,
 ) -> std::result::Result<Json<Vec<AuditRecord>>, DaemonApiError> {
     let limit = query.limit.unwrap_or(25).min(500);
+    let offset = query.offset.unwrap_or(0);
+    let store_query = AuditRecordQuery {
+        layer: query.layer,
+        agent_name: query.agent_name,
+        operation: query.operation,
+        action: query.action,
+        risk_level: query.risk_level,
+        start_time: query.start_time,
+        end_time: query.end_time,
+        limit,
+        offset,
+    };
     let records = state
         .daemon
         .lock()
         .map_err(lock_error)?
-        .recent_audit_records(limit)?;
+        .query_audit_records(&store_query)?;
     Ok(Json(records))
 }
 

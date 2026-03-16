@@ -4,6 +4,8 @@ import {
   exportRules,
   importRules,
   loadDashboard,
+  loadProcesses,
+  queryAuditLogs,
   loadRuntimeEnvironment,
   resolveApprovalRequest,
   runRealAgentDemo,
@@ -15,13 +17,16 @@ import {
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
 import { AuditPage } from "./pages/AuditPage";
+import type { AuditFilters } from "./pages/AuditPage";
 import { ProcessesPage } from "./pages/ProcessesPage";
 import { RulesPage } from "./pages/RulesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SetupPage } from "./pages/SetupPage";
 import { useLanguage, type Language, type NavItem } from "./i18n";
 import type {
   ApprovalRequest,
   AuditRecord,
+  AuditQuery,
   DashboardSnapshot,
   DemoRunResult,
   EnforcementAction,
@@ -32,9 +37,36 @@ import type {
   RiskLevel,
   RuleExport,
   RuntimeEnvironment,
+  RuntimeProcessInfo,
   RuntimeStartResult,
   SampleEventKind,
 } from "./types";
+
+const AUDIT_PAGE_SIZE = 50;
+const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+
+const KNOWN_AGENT_PROCESS_PATTERNS: RegExp[] = [
+  /claude/i,
+  /cursor/i,
+  /aider/i,
+  /autogpt/i,
+  /copilot/i,
+  /codex/i,
+  /agent/i,
+];
+
+interface ProtectionAlert {
+  id: string;
+  severity: "critical" | "warning";
+  message: string;
+  processes: Array<RuntimeProcessInfo & { risk: "high" | "medium" | "low" }>;
+}
+
+interface ProtectionFixResult {
+  status: "success" | "error";
+  message: string;
+  at: number;
+}
 
 const SAMPLE_SCENARIOS: Array<{
   kind: SampleEventKind;
@@ -134,7 +166,23 @@ export default function App() {
   const [showRuleEditorModal, setShowRuleEditorModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [auditRecords, setAuditRecords] = useState<AuditRecord[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditHasNextPage, setAuditHasNextPage] = useState(false);
+  const [auditFilters, setAuditFilters] = useState<AuditFilters>({
+    searchQuery: "",
+    filterLayer: "all",
+    filterAction: "all",
+    filterRisk: "all",
+    timeRange: "7d",
+  });
   const [darkMode, setDarkMode] = useState(false);
+  const [processes, setProcesses] = useState<RuntimeProcessInfo[]>([]);
+  const [processesLoading, setProcessesLoading] = useState(false);
+  const [alertCooldownUntil, setAlertCooldownUntil] = useState<Record<string, number>>({});
+  const [lastProtectionFix, setLastProtectionFix] = useState<ProtectionFixResult | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dataRetentionDays, setDataRetentionDays] = useState(30);
 
@@ -197,14 +245,16 @@ export default function App() {
     }
 
     try {
-      const [nextSnapshot, nextRuntimeEnvironment] = await Promise.all([
+      const [nextSnapshot, nextRuntimeEnvironment, nextProcesses] = await Promise.all([
         loadDashboard(30),
         loadRuntimeEnvironment(),
+        loadProcesses(120).catch(() => []),
       ]);
       setError(null);
       startTransition(() => {
         setSnapshot(nextSnapshot);
         setRuntimeEnvironment(nextRuntimeEnvironment);
+        setProcesses(nextProcesses);
       });
     } catch (refreshError) {
       setError(getErrorMessage(refreshError));
@@ -227,6 +277,83 @@ export default function App() {
       setSubmitting(false);
     }
   }
+
+  async function refreshAuditLogs() {
+    setAuditLoading(true);
+    try {
+      const now = Date.now();
+      const startTime = auditFilters.timeRange === "today"
+        ? new Date(now).setHours(0, 0, 0, 0)
+        : auditFilters.timeRange === "7d"
+          ? now - 7 * 24 * 60 * 60 * 1000
+          : auditFilters.timeRange === "30d"
+            ? now - 30 * 24 * 60 * 60 * 1000
+            : undefined;
+
+      const query: AuditQuery = {
+        layer: auditFilters.filterLayer !== "all" ? auditFilters.filterLayer : undefined,
+        agent_name: auditFilters.searchQuery.trim() || undefined,
+        action: auditFilters.filterAction !== "all" ? auditFilters.filterAction : undefined,
+        risk_level: auditFilters.filterRisk !== "all" ? auditFilters.filterRisk : undefined,
+        start_time: startTime,
+        end_time: startTime ? now : undefined,
+        limit: AUDIT_PAGE_SIZE + 1,
+        offset: (auditPage - 1) * AUDIT_PAGE_SIZE,
+      };
+      const raw = await queryAuditLogs(query);
+      setAuditHasNextPage(raw.length > AUDIT_PAGE_SIZE);
+      setAuditRecords(raw.slice(0, AUDIT_PAGE_SIZE));
+      setAuditLoaded(true);
+      setError(null);
+    } catch (auditError) {
+      setError(getErrorMessage(auditError));
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (currentPage !== "audit") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void refreshAuditLogs();
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [currentPage, auditFilters, auditPage]);
+
+  function handleAuditFiltersChange(nextFilters: AuditFilters) {
+    setAuditPage(1);
+    setAuditFilters(nextFilters);
+  }
+
+  async function refreshProcesses() {
+    setProcessesLoading(true);
+    try {
+      const next = await loadProcesses(120);
+      setProcesses(next);
+      setError(null);
+    } catch (processError) {
+      setError(getErrorMessage(processError));
+    } finally {
+      setProcessesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (currentPage !== "processes") {
+      return;
+    }
+
+    void refreshProcesses();
+    const timer = window.setInterval(() => {
+      void refreshProcesses();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [currentPage]);
 
   async function handleResolveApproval(action: Exclude<EnforcementAction, "ask">) {
     const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
@@ -297,18 +424,58 @@ export default function App() {
     setActiveApprovalId(null);
   }
 
-  async function handleStartLocalStack() {
+  async function handleStartLocalStack(): Promise<RuntimeStartResult | null> {
     setStartingStack(true);
     try {
       const result = await startLocalStack();
       setStackResult(result);
       setError(null);
       await refreshDashboard(false);
+      return result;
     } catch (stackError) {
       setError(getErrorMessage(stackError));
+      return null;
     } finally {
       setStartingStack(false);
     }
+  }
+
+  async function handleProtectionQuickFix() {
+    const result = await handleStartLocalStack();
+    if (result) {
+      setLastProtectionFix({
+        status: "success",
+        message: result.message,
+        at: Date.now(),
+      });
+      return;
+    }
+
+    setLastProtectionFix({
+      status: "error",
+      message: t.dashboard.fixFailed,
+      at: Date.now(),
+    });
+  }
+
+  function dismissProtectionAlert(id: string) {
+    setAlertCooldownUntil((prev) => ({
+      ...prev,
+      [id]: Date.now() + ALERT_COOLDOWN_MS,
+    }));
+  }
+
+  function dismissProtectionAlertsBySeverity(severity: "critical" | "warning") {
+    const now = Date.now();
+    setAlertCooldownUntil((prev) => {
+      const next = { ...prev };
+      for (const alert of protectionAlerts) {
+        if (alert.severity === severity) {
+          next[alert.id] = now + ALERT_COOLDOWN_MS;
+        }
+      }
+      return next;
+    });
   }
 
   async function handleRunRealDemo() {
@@ -589,6 +756,69 @@ export default function App() {
     : false;
   const editingRule = rememberedRules.find((rule) => rule.id === editingRuleId) ?? null;
   const runtimeIssues = runtimeEnvironment?.issues ?? [];
+  const likelyAgentProcesses = useMemo(
+    () =>
+      processes.filter((process) => {
+        const searchText = `${process.name} ${process.command}`;
+        return KNOWN_AGENT_PROCESS_PATTERNS.some((pattern) => pattern.test(searchText));
+      }),
+    [processes],
+  );
+
+  const protectionAlerts = useMemo<ProtectionAlert[]>(() => {
+    if (likelyAgentProcesses.length === 0) {
+      return [];
+    }
+
+    const rawAlerts: Omit<ProtectionAlert, "id">[] = [];
+    const proxyRunning = Boolean(runtimeEnvironment?.proxy_source);
+    const enrichedAgentProcesses = likelyAgentProcesses
+      .map((process) => ({ ...process, risk: process.risk }))
+      .sort((left, right) => {
+        const byRisk = riskWeight(right.risk) - riskWeight(left.risk);
+        if (byRisk !== 0) return byRisk;
+        if (right.events !== left.events) return right.events - left.events;
+        return right.cpu - left.cpu;
+      });
+
+    if (!proxyRunning) {
+      rawAlerts.push({
+        severity: "critical",
+        message: t.dashboard.proxyDownWithAgents,
+        processes: enrichedAgentProcesses.slice(0, 8),
+      });
+      return rawAlerts.map((alert) => ({
+        ...alert,
+        id: buildProtectionAlertId(alert),
+      }));
+    }
+
+    const unprotected = enrichedAgentProcesses.filter((process) => process.events === 0);
+    if (unprotected.length > 0) {
+      rawAlerts.push({
+        severity: "warning",
+        message: t.dashboard.unprotectedAgentSessions,
+        processes: unprotected.slice(0, 8),
+      });
+    }
+
+    return rawAlerts
+      .map((alert) => ({
+        ...alert,
+        id: buildProtectionAlertId(alert),
+      }))
+      .filter((alert, index, arr) => arr.findIndex((x) => x.id === alert.id) === index)
+      .filter((alert) => {
+        const cooldownUntil = alertCooldownUntil[alert.id] ?? 0;
+        return cooldownUntil <= Date.now();
+      });
+  }, [
+    alertCooldownUntil,
+    likelyAgentProcesses,
+    runtimeEnvironment?.proxy_source,
+    t.dashboard.proxyDownWithAgents,
+    t.dashboard.unprotectedAgentSessions,
+  ]);
 
   function handleAddFromTemplate() {
     setShowTemplateModal(true);
@@ -619,6 +849,12 @@ export default function App() {
           lastRecord={lastRecord}
           runtimeEnvironment={runtimeEnvironment}
           runtimeIssues={runtimeIssues}
+          protectionAlerts={protectionAlerts}
+          lastProtectionFix={lastProtectionFix}
+          onDismissProtectionAlert={dismissProtectionAlert}
+          onDismissProtectionWarnings={() => dismissProtectionAlertsBySeverity("warning")}
+          onProtectionQuickFix={() => void handleProtectionQuickFix()}
+          onOpenSetup={() => setCurrentPage('setup')}
           onStartLocalStack={handleStartLocalStack}
           startingStack={startingStack}
           stackResult={stackResult ? {
@@ -652,13 +888,23 @@ export default function App() {
       
       {currentPage === 'audit' && (
         <AuditPage
-          records={filteredAuditRecords}
-          loading={loading}
+          records={auditLoaded ? auditRecords : filteredAuditRecords}
+          loading={auditLoading || loading}
+          currentPage={auditPage}
+          hasNextPage={auditHasNextPage}
+          onPageChange={setAuditPage}
+          filters={auditFilters}
+          onFiltersChange={handleAuditFiltersChange}
+          onRefresh={() => void refreshAuditLogs()}
         />
       )}
       
       {currentPage === 'processes' && (
-        <ProcessesPage loading={loading} />
+        <ProcessesPage
+          loading={processesLoading || loading}
+          processes={processes}
+          onRefresh={() => void refreshProcesses()}
+        />
       )}
       
       {currentPage === 'rules' && (
@@ -685,6 +931,15 @@ export default function App() {
           onNotificationsChange={setNotificationsEnabled}
           dataRetentionDays={dataRetentionDays}
           onDataRetentionChange={setDataRetentionDays}
+        />
+      )}
+
+      {currentPage === 'setup' && (
+        <SetupPage
+          runtimeEnvironment={runtimeEnvironment}
+          onStartLocalStack={handleStartLocalStack}
+          startingStack={startingStack}
+          stackResult={stackResult}
         />
       )}
 
@@ -1145,4 +1400,17 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "Unknown desktop error";
+}
+
+function buildProtectionAlertId(alert: {
+  severity: "critical" | "warning";
+  message: string;
+  processes: Array<RuntimeProcessInfo & { risk: "high" | "medium" | "low" }>;
+}): string {
+  const pids = alert.processes.map((process) => process.pid).sort((a, b) => a - b);
+  return `${alert.severity}:${alert.message}:${pids.join(",")}`;
+}
+
+function riskWeight(risk: "high" | "medium" | "low"): number {
+  return risk === "high" ? 3 : risk === "medium" ? 2 : 1;
 }

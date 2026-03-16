@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -118,8 +119,27 @@ struct RuleImport {
     export_data: RuleExport,
 }
 
+#[derive(Debug, Serialize)]
+struct RuntimeProcessInfo {
+    pid: u32,
+    name: String,
+    risk: String,
+    status: String,
+    cpu: f32,
+    memory: f32,
+    network: u64,
+    events: u32,
+    uptime: u64,
+    command: String,
+    user: String,
+    threads: u32,
+    #[serde(rename = "openFiles")]
+    open_files: u32,
+}
+
 #[derive(Debug, Deserialize)]
 struct AuditQuery {
+    layer: Option<String>,
     agent_name: Option<String>,
     operation: Option<String>,
     action: Option<String>,
@@ -380,36 +400,40 @@ async fn query_audit_logs(
     state: tauri::State<'_, DesktopState>,
     query: AuditQuery,
 ) -> Result<Vec<AuditRecord>, String> {
-    let mut url = format!("{}/v1/audit?", state.daemon_url);
+    let mut params: Vec<(&str, String)> = Vec::new();
 
+    if let Some(layer) = &query.layer {
+        params.push(("layer", layer.clone()));
+    }
     if let Some(agent_name) = &query.agent_name {
-        url.push_str(&format!("agent_name={}&", agent_name));
+        params.push(("agent_name", agent_name.clone()));
     }
     if let Some(operation) = &query.operation {
-        url.push_str(&format!("operation={}&", operation));
+        params.push(("operation", operation.clone()));
     }
     if let Some(action) = &query.action {
-        url.push_str(&format!("action={}&", action));
+        params.push(("action", action.clone()));
     }
     if let Some(risk_level) = &query.risk_level {
-        url.push_str(&format!("risk_level={}&", risk_level));
+        params.push(("risk_level", risk_level.clone()));
     }
     if let Some(start_time) = query.start_time {
-        url.push_str(&format!("start_time={}&", start_time));
+        params.push(("start_time", start_time.to_string()));
     }
     if let Some(end_time) = query.end_time {
-        url.push_str(&format!("end_time={}&", end_time));
+        params.push(("end_time", end_time.to_string()));
     }
     if let Some(limit) = query.limit {
-        url.push_str(&format!("limit={}&", limit));
+        params.push(("limit", limit.to_string()));
     }
     if let Some(offset) = query.offset {
-        url.push_str(&format!("offset={}&", offset));
+        params.push(("offset", offset.to_string()));
     }
 
     let response = state
         .client
-        .get(url)
+        .get(format!("{}/v1/audit", state.daemon_url))
+        .query(&params)
         .send()
         .await
         .map_err(|error| format!("failed to query audit logs: {error}"))?;
@@ -422,6 +446,188 @@ async fn query_audit_logs(
         .json::<Vec<AuditRecord>>()
         .await
         .map_err(|error| format!("failed to decode audit logs: {error}"))
+}
+
+#[tauri::command]
+async fn list_runtime_processes(
+    state: tauri::State<'_, DesktopState>,
+    limit: Option<usize>,
+) -> Result<Vec<RuntimeProcessInfo>, String> {
+    let limit = limit.unwrap_or(80).clamp(1, 300);
+
+    let mut event_count_by_pid: HashMap<u32, u32> = HashMap::new();
+    if let Ok(records) = fetch_recent_audit(&state, 500).await {
+        for record in records {
+            if let Some(pid) = record.event.agent.process_id {
+                *event_count_by_pid.entry(pid).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let output = Command::new("ps")
+        .args(["-axo", "pid,user,state,pcpu,rss,etime,comm,args"]) // macOS compatible
+        .output()
+        .map_err(|error| format!("failed to run ps: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "failed to list processes: ps exited with {}",
+            output.status
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("ps output is not valid UTF-8: {error}"))?;
+
+    let mut processes = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let pid = match parts.next().and_then(|value| value.parse::<u32>().ok()) {
+            Some(pid) => pid,
+            None => continue,
+        };
+
+        let user = parts.next().unwrap_or("unknown").to_string();
+        let state = parts.next().unwrap_or("?");
+        let cpu = parts
+            .next()
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        let rss_kb = parts
+            .next()
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        let elapsed = parts.next().unwrap_or("00:00");
+        let comm = parts.next().unwrap_or("");
+        let command_rest = parts.collect::<Vec<_>>().join(" ");
+
+        let uptime = parse_ps_elapsed_to_seconds(elapsed);
+        let command = if command_rest.is_empty() {
+            comm.to_string()
+        } else {
+            format!("{comm} {command_rest}")
+        };
+
+        let name = Path::new(comm)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(comm)
+            .to_string();
+
+        processes.push(RuntimeProcessInfo {
+            pid,
+            name,
+            risk: classify_process_risk(&command, cpu, rss_kb / 1024.0).into(),
+            status: map_ps_state(state),
+            cpu,
+            memory: rss_kb / 1024.0,
+            network: 0,
+            events: event_count_by_pid.get(&pid).copied().unwrap_or(0),
+            uptime,
+            command,
+            user,
+            threads: 0,
+            open_files: 0,
+        });
+    }
+
+    processes.sort_by(|left, right| {
+        right
+            .events
+            .cmp(&left.events)
+            .then_with(|| right.cpu.partial_cmp(&left.cpu).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| right.memory.partial_cmp(&left.memory).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    processes.truncate(limit);
+
+    Ok(processes)
+}
+
+fn map_ps_state(state: &str) -> String {
+    match state.chars().next().unwrap_or('?') {
+        'R' | 'I' | 'S' => "running".into(),
+        'T' => "stopped".into(),
+        'Z' => "zombie".into(),
+        _ => "running".into(),
+    }
+}
+
+fn parse_ps_elapsed_to_seconds(input: &str) -> u64 {
+    let (days, hhmmss) = match input.split_once('-') {
+        Some((day_part, rest)) => (day_part.parse::<u64>().unwrap_or(0), rest),
+        None => (0, input),
+    };
+
+    let parts: Vec<u64> = hhmmss
+        .split(':')
+        .map(|value| value.parse::<u64>().unwrap_or(0))
+        .collect();
+
+    let seconds = match parts.as_slice() {
+        [mm, ss] => mm * 60 + ss,
+        [hh, mm, ss] => hh * 3600 + mm * 60 + ss,
+        _ => 0,
+    };
+
+    days * 24 * 3600 + seconds
+}
+
+fn classify_process_risk(command: &str, cpu: f32, memory_mb: f32) -> &'static str {
+    let text = command.to_ascii_lowercase();
+    let high_patterns = [
+        "rm -rf",
+        "sudo ",
+        "chmod 777",
+        "/.ssh",
+        "id_rsa",
+        "private_key",
+        "private-key",
+        "curl http",
+        "wget http",
+        "nmap",
+        " netcat",
+        " nc ",
+        " ssh ",
+        " scp ",
+        "token",
+        "api_key",
+        "api-key",
+        "credential",
+        "secret",
+    ];
+    if high_patterns.iter().any(|pattern| text.contains(pattern)) {
+        return "high";
+    }
+
+    let medium_patterns = [
+        "python",
+        "node",
+        "npm",
+        "pnpm",
+        "pip",
+        " uv ",
+        "git ",
+        "docker",
+        "kubectl",
+        "http",
+        "https",
+        "localhost",
+        "127.0.0.1",
+    ];
+    if medium_patterns.iter().any(|pattern| text.contains(pattern)) {
+        return "medium";
+    }
+
+    if cpu > 40.0 || memory_mb > 1024.0 {
+        return "medium";
+    }
+
+    "low"
 }
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
@@ -1533,7 +1739,8 @@ pub fn run() {
             run_real_agent_demo,
             export_policy_rules,
             import_policy_rules,
-            query_audit_logs
+            query_audit_logs,
+            list_runtime_processes
         ])
         .run(tauri::generate_context!())
         .expect("error while running agentguard desktop application");

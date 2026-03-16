@@ -1,5 +1,5 @@
 // 导航相关类型
-export type Page = 'dashboard' | 'audit' | 'processes' | 'rules' | 'settings';
+export type Page = 'dashboard' | 'audit' | 'processes' | 'rules' | 'settings' | 'setup';
 
 export interface NavItem {
   id: Page;
@@ -10,6 +10,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', labelZh: '仪表盘', icon: '📊' },
+  { id: 'setup', label: 'Setup', labelZh: '快速接入', icon: '🛡️' },
   { id: 'audit', label: 'Audit Logs', labelZh: '审计日志', icon: '📜' },
   { id: 'processes', label: 'Processes', labelZh: '进程监控', icon: '⚙️' },
   { id: 'rules', label: 'Rules', labelZh: '规则管理', icon: '📋' },
@@ -43,6 +44,16 @@ export interface Translation {
     daemonStopped: string;
     proxyRunning: string;
     proxyStopped: string;
+    protectionAlerts: string;
+    noProtectionAlerts: string;
+    proxyDownWithAgents: string;
+    unprotectedAgentSessions: string;
+    openSetup: string;
+    fixNow: string;
+    dismissFor10m: string;
+    dismissAllWarningsFor10m: string;
+    lastFixStatus: string;
+    fixFailed: string;
   };
   audit: {
     title: string;
@@ -100,6 +111,21 @@ export interface Translation {
     disable: string;
     noRules: string;
     createFirst: string;
+  };
+  setup: {
+    title: string;
+    subtitle: string;
+    step1Title: string;
+    step1Desc: string;
+    step2Title: string;
+    step2Desc: string;
+    step3Title: string;
+    step3Desc: string;
+    startBtn: string;
+    startFirst: string;
+    proxyListening: string;
+    doneTitle: string;
+    doneDesc: string;
   };
   settings: {
     title: string;
@@ -184,6 +210,16 @@ export const translations: Record<'en' | 'zh', Translation> = {
       daemonStopped: 'Daemon Stopped',
       proxyRunning: 'Proxy Running',
       proxyStopped: 'Proxy Stopped',
+      protectionAlerts: 'Protection Alerts',
+      noProtectionAlerts: 'No obvious unprotected agent sessions detected.',
+      proxyDownWithAgents: 'Proxy is offline while agent processes are active.',
+      unprotectedAgentSessions: 'Some agent processes have zero protected events.',
+      openSetup: 'Open Setup',
+      fixNow: 'Fix Now',
+      dismissFor10m: 'Dismiss 10m',
+      dismissAllWarningsFor10m: 'Dismiss all warnings for 10m',
+      lastFixStatus: 'Last Fix Attempt',
+      fixFailed: 'Quick fix failed. Check runtime status and try Setup.',
     },
     audit: {
       title: 'Audit Logs',
@@ -241,6 +277,21 @@ export const translations: Record<'en' | 'zh', Translation> = {
       disable: 'Disable',
       noRules: 'No rules configured',
       createFirst: 'Create your first rule to get started',
+    },
+    setup: {
+      title: 'Proxy Setup',
+      subtitle: 'Route any AI tool through AgentGuard in 3 steps — no code changes needed.',
+      step1Title: 'Start AgentGuard',
+      step1Desc: 'Launch the local daemon and proxy. Takes about 2 seconds.',
+      step2Title: 'Choose your tool',
+      step2Desc: 'Pick the AI tool or environment you want to protect.',
+      step3Title: 'Copy the config',
+      step3Desc: 'Paste the snippet into your tool or shell. That\'s it.',
+      startBtn: '🚀 Start AgentGuard',
+      startFirst: 'Start AgentGuard in Step 1 first.',
+      proxyListening: 'Proxy listening at',
+      doneTitle: 'AgentGuard is active!',
+      doneDesc: 'All AI API calls now flow through AgentGuard. Check the Audit Logs page to see real-time events.',
     },
     settings: {
       title: 'Settings',
@@ -323,6 +374,16 @@ export const translations: Record<'en' | 'zh', Translation> = {
       daemonStopped: '守护进程已停止',
       proxyRunning: '代理服务运行中',
       proxyStopped: '代理服务已停止',
+      protectionAlerts: '防护告警',
+      noProtectionAlerts: '暂未检测到明显未受保护的 Agent 会话。',
+      proxyDownWithAgents: '检测到 Agent 进程活跃，但 Proxy 未运行。',
+      unprotectedAgentSessions: '部分 Agent 进程尚未产生受保护事件。',
+      openSetup: '前往 Setup',
+      fixNow: '立即修复',
+      dismissFor10m: '10 分钟忽略',
+      dismissAllWarningsFor10m: '10 分钟忽略全部 warning',
+      lastFixStatus: '最近修复结果',
+      fixFailed: '一键修复失败，请检查运行状态或前往 Setup。',
     },
     audit: {
       title: '审计日志',
@@ -380,6 +441,21 @@ export const translations: Record<'en' | 'zh', Translation> = {
       disable: '禁用',
       noRules: '暂无规则',
       createFirst: '创建第一条规则开始使用',
+    },
+    setup: {
+      title: 'Proxy 接入向导',
+      subtitle: '3 步将任意 AI 工具接入 AgentGuard，无需修改代码。',
+      step1Title: '启动 AgentGuard',
+      step1Desc: '启动本地守护进程和代理服务，约 2 秒钟完成。',
+      step2Title: '选择你的 AI 工具',
+      step2Desc: '选择你想保护的 AI 工具或运行环境。',
+      step3Title: '复制配置',
+      step3Desc: '将代码片段粘贴到你的工具或 Shell 配置中，完成。',
+      startBtn: '🚀 启动 AgentGuard',
+      startFirst: '请先完成第 1 步，启动 AgentGuard。',
+      proxyListening: '代理监听地址',
+      doneTitle: 'AgentGuard 已就绪！',
+      doneDesc: '所有 AI API 请求现在都经过 AgentGuard 检查。前往「审计日志」页面查看实时事件。',
     },
     settings: {
       title: '设置',

@@ -10,7 +10,7 @@ use agentguard_models::{
     ApprovalRequest, ApprovalStatus, AuditRecord, Decision, EnforcementAction, Event, ManagedRule,
     Rule,
 };
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -135,6 +135,19 @@ impl From<SystemTimeError> for StoreError {
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
+
+#[derive(Debug, Default, Clone)]
+pub struct AuditRecordQuery {
+    pub layer: Option<String>,
+    pub agent_name: Option<String>,
+    pub operation: Option<String>,
+    pub action: Option<String>,
+    pub risk_level: Option<String>,
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
+    pub limit: usize,
+    pub offset: usize,
+}
 
 pub struct AuditStore {
     connection: Connection,
@@ -419,6 +432,78 @@ impl AuditStore {
         )?;
 
         let rows = statement.query_map(params![limit as i64], |row| {
+            let event_json: String = row.get(2)?;
+            let decision_json: String = row.get(3)?;
+            let event: Event = serde_json::from_str(&event_json).map_err(json_decode_error)?;
+            let decision: Decision =
+                serde_json::from_str(&decision_json).map_err(json_decode_error)?;
+
+            Ok(AuditRecord {
+                id: row.get(0)?,
+                recorded_at_unix_ms: row.get(1)?,
+                event,
+                decision,
+            })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    pub fn query_audit_records(&self, query: &AuditRecordQuery) -> Result<Vec<AuditRecord>> {
+        let limit = query.limit;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            r#"
+            SELECT
+                id,
+                recorded_at_unix_ms,
+                event_json,
+                decision_json
+            FROM audit_records
+            WHERE 1 = 1
+            "#,
+        );
+        let mut bind_values: Vec<Value> = Vec::new();
+
+        if let Some(layer) = &query.layer {
+            sql.push_str(" AND layer = ?");
+            bind_values.push(Value::from(layer.clone()));
+        }
+        if let Some(agent_name) = &query.agent_name {
+            sql.push_str(" AND lower(agent_name) LIKE lower(?)");
+            bind_values.push(Value::from(format!("%{agent_name}%")));
+        }
+        if let Some(operation) = &query.operation {
+            sql.push_str(" AND operation = ?");
+            bind_values.push(Value::from(operation.clone()));
+        }
+        if let Some(action) = &query.action {
+            sql.push_str(" AND action = ?");
+            bind_values.push(Value::from(action.clone()));
+        }
+        if let Some(risk_level) = &query.risk_level {
+            sql.push_str(" AND risk = ?");
+            bind_values.push(Value::from(risk_level.clone()));
+        }
+        if let Some(start_time) = query.start_time {
+            sql.push_str(" AND recorded_at_unix_ms >= ?");
+            bind_values.push(Value::from(start_time));
+        }
+        if let Some(end_time) = query.end_time {
+            sql.push_str(" AND recorded_at_unix_ms <= ?");
+            bind_values.push(Value::from(end_time));
+        }
+
+        sql.push_str(" ORDER BY recorded_at_unix_ms DESC, id DESC LIMIT ? OFFSET ?");
+        bind_values.push(Value::from(limit as i64));
+        bind_values.push(Value::from(query.offset as i64));
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(bind_values.iter()), |row| {
             let event_json: String = row.get(2)?;
             let decision_json: String = row.get(3)?;
             let event: Event = serde_json::from_str(&event_json).map_err(json_decode_error)?;

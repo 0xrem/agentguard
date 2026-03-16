@@ -1,89 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { useLanguage } from '../i18n';
-
-interface ProcessInfo {
-  pid: number;
-  name: string;
-  status: 'running' | 'stopped' | 'zombie';
-  cpu: number;
-  memory: number;
-  network: number;
-  events: number;
-  uptime: number;
-  command: string;
-  user: string;
-  threads: number;
-  openFiles: number;
-}
+import type { RuntimeProcessInfo } from '../types';
 
 interface ProcessesPageProps {
   loading: boolean;
+  processes: RuntimeProcessInfo[];
+  onRefresh: () => void;
 }
 
-export function ProcessesPage({ loading }: ProcessesPageProps) {
+export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPageProps) {
   const { t } = useLanguage();
-  const [selectedProcess, setSelectedProcess] = useState<ProcessInfo | null>(null);
+  const [selectedProcess, setSelectedProcess] = useState<RuntimeProcessInfo | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
-  // 模拟进程数据（实际应从 API 获取）
-  const [processes, setProcesses] = useState<ProcessInfo[]>([
-    {
-      pid: 12345,
-      name: 'python3',
-      status: 'running',
-      cpu: 12.5,
-      memory: 256.8,
-      network: 1024,
-      events: 42,
-      uptime: 3600,
-      command: 'python3 -m agentguard.daemon',
-      user: 'developer',
-      threads: 8,
-      openFiles: 24,
-    },
-    {
-      pid: 12346,
-      name: 'node',
-      status: 'running',
-      cpu: 8.2,
-      memory: 512.4,
-      network: 2048,
-      events: 156,
-      uptime: 7200,
-      command: 'node apps/desktop/dist/main.js',
-      user: 'developer',
-      threads: 12,
-      openFiles: 48,
-    },
-    {
-      pid: 12347,
-      name: 'cargo',
-      status: 'running',
-      cpu: 45.6,
-      memory: 1024.2,
-      network: 512,
-      events: 28,
-      uptime: 1800,
-      command: 'cargo build --release',
-      user: 'developer',
-      threads: 16,
-      openFiles: 64,
-    },
-  ]);
-
-  // 模拟实时更新
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setProcesses(prev => prev.map(p => ({
-        ...p,
-        cpu: Math.max(0.1, p.cpu + (Math.random() - 0.5) * 5),
-        memory: Math.max(10, p.memory + (Math.random() - 0.5) * 10),
-        network: Math.max(0, p.network + Math.floor((Math.random() - 0.5) * 100)),
-      })));
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, []);
+  const sortedProcesses = useMemo(
+    () => [...processes].sort((a, b) => b.events - a.events || b.cpu - a.cpu || b.memory - a.memory),
+    [processes],
+  );
 
   const formatUptime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -101,7 +34,7 @@ export function ProcessesPage({ loading }: ProcessesPageProps) {
     }
   };
 
-  const handleViewDetails = (process: ProcessInfo) => {
+  const handleViewDetails = (process: RuntimeProcessInfo) => {
     setSelectedProcess(process);
     setShowDetails(true);
   };
@@ -121,14 +54,14 @@ export function ProcessesPage({ loading }: ProcessesPageProps) {
           <h1>{t.processes.title}</h1>
           <p>{t.processes.subtitle}</p>
         </div>
-        <button className="btn btn-secondary" onClick={() => setProcesses([...processes])}>
+        <button className="btn btn-secondary" onClick={onRefresh}>
           {t.processes.refresh}
         </button>
       </header>
 
       {/* 进程卡片网格 */}
       <div className="processes-grid">
-        {processes.map((process) => (
+        {sortedProcesses.map((process) => (
           <div key={process.pid} className="process-card">
             <div className="process-header">
               <div className="process-icon">⚙️</div>
@@ -195,7 +128,7 @@ export function ProcessesPage({ loading }: ProcessesPageProps) {
         ))}
       </div>
 
-      {processes.length === 0 && (
+      {sortedProcesses.length === 0 && (
         <div className="empty-state">{t.processes.noProcesses}</div>
       )}
 

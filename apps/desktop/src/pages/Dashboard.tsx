@@ -1,7 +1,20 @@
 import { useState } from 'react';
 import { useLanguage } from '../i18n';
-import type { DashboardSnapshot, RuntimeEnvironment, SampleEventKind, AuditRecord, PolicyRule } from '../types';
+import type { DashboardSnapshot, RuntimeEnvironment, RuntimeProcessInfo, SampleEventKind, AuditRecord, PolicyRule } from '../types';
 import { startLocalStack, runRealAgentDemo } from '../api';
+
+interface ProtectionAlert {
+  id: string;
+  severity: 'critical' | 'warning';
+  message: string;
+  processes: Array<RuntimeProcessInfo & { risk: 'high' | 'medium' | 'low' }>;
+}
+
+interface ProtectionFixResult {
+  status: 'success' | 'error';
+  message: string;
+  at: number;
+}
 
 interface DashboardProps {
   snapshot: DashboardSnapshot | null;
@@ -14,6 +27,12 @@ interface DashboardProps {
   lastRecord: AuditRecord | null;
   runtimeEnvironment: RuntimeEnvironment | null;
   runtimeIssues: string[];
+  protectionAlerts: ProtectionAlert[];
+  lastProtectionFix: ProtectionFixResult | null;
+  onDismissProtectionAlert: (id: string) => void;
+  onDismissProtectionWarnings: () => void;
+  onProtectionQuickFix: () => void;
+  onOpenSetup: () => void;
   onStartLocalStack: () => void;
   startingStack: boolean;
   stackResult: { mode: string; command: string; exit_code: number | null; stdout: string; stderr: string; message: string } | null;
@@ -36,6 +55,12 @@ export function Dashboard({
   lastRecord,
   runtimeEnvironment,
   runtimeIssues,
+  protectionAlerts,
+  lastProtectionFix,
+  onDismissProtectionAlert,
+  onDismissProtectionWarnings,
+  onProtectionQuickFix,
+  onOpenSetup,
   onStartLocalStack,
   startingStack,
   stackResult,
@@ -157,6 +182,62 @@ export function Dashboard({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="section">
+        <h2>{t.dashboard.protectionAlerts}</h2>
+        {lastProtectionFix ? (
+          <div className={`protection-fix-result ${lastProtectionFix.status}`}>
+            <strong>{t.dashboard.lastFixStatus}</strong>
+            <span>{new Date(lastProtectionFix.at).toLocaleTimeString()} · {lastProtectionFix.message}</span>
+          </div>
+        ) : null}
+        {protectionAlerts.length === 0 ? (
+          <div className="protection-ok">✅ {t.dashboard.noProtectionAlerts}</div>
+        ) : (
+          <div className="protection-alert-list">
+            {protectionAlerts.some((alert) => alert.severity === 'warning') ? (
+              <div className="protection-batch-actions">
+                <button className="btn btn-text btn-sm" onClick={onDismissProtectionWarnings}>
+                  {t.dashboard.dismissAllWarningsFor10m}
+                </button>
+              </div>
+            ) : null}
+            {protectionAlerts.map((alert) => (
+              <div
+                key={alert.id}
+                className={`protection-alert ${alert.severity}`}
+              >
+                <div className="protection-alert-title">{alert.message}</div>
+                <div className="protection-alert-processes">
+                  {alert.processes.map((process) => (
+                    <span key={process.pid} className="protection-process-pill">
+                      {process.risk === 'high' ? '🔴' : process.risk === 'medium' ? '🟠' : '🟢'} {process.name} (pid {process.pid})
+                    </span>
+                  ))}
+                </div>
+                <div className="protection-alert-actions">
+                  <button className="btn btn-secondary btn-sm" onClick={onOpenSetup}>
+                    {t.dashboard.openSetup}
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={onProtectionQuickFix}
+                    disabled={startingStack}
+                  >
+                    {startingStack ? t.common.loading : t.dashboard.fixNow}
+                  </button>
+                  <button
+                    className="btn btn-text btn-sm"
+                    onClick={() => onDismissProtectionAlert(alert.id)}
+                  >
+                    {t.dashboard.dismissFor10m}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 最近活动 */}

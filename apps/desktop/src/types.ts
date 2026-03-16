@@ -105,6 +105,22 @@ export interface RuntimeEnvironment {
   message: string;
 }
 
+export interface RuntimeProcessInfo {
+  pid: number;
+  name: string;
+  risk: "high" | "medium" | "low";
+  status: "running" | "stopped" | "zombie";
+  cpu: number;
+  memory: number;
+  network: number;
+  events: number;
+  uptime: number;
+  command: string;
+  user: string;
+  threads: number;
+  openFiles: number;
+}
+
 export interface RuleTemplate {
   id: string;
   name: string;
@@ -190,6 +206,7 @@ export interface RuleExport {
 }
 
 export interface AuditQuery {
+  layer?: string;
   agent_name?: string;
   operation?: string;
   action?: string;

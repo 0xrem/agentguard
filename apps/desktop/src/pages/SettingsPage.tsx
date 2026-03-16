@@ -41,7 +41,7 @@ export function SettingsPage({
           </div>
           <div className="settings-card-body">
             <div className="setting-row">
-              <label className="setting-label">{t.settings.selectLanguage}</label>
+              <label className="setting-label">{t.settings.language}</label>
               <select
                 className="setting-select"
                 value={currentLanguage}
@@ -62,11 +62,11 @@ export function SettingsPage({
         {/* 外观设置 */}
         <section className="settings-card">
           <div className="settings-card-header">
-            <h2>🎨 {t.settings.appearance}</h2>
+            <h2>🎨 {t.settings.theme}</h2>
           </div>
           <div className="settings-card-body">
             <div className="setting-row">
-              <label className="setting-label">{t.settings.darkMode}</label>
+              <label className="setting-label">{t.settings.themeDescription}</label>
               <label className="toggle-switch">
                 <input
                   type="checkbox"
@@ -91,7 +91,7 @@ export function SettingsPage({
           </div>
           <div className="settings-card-body">
             <div className="setting-row">
-              <label className="setting-label">{t.settings.enableNotifications}</label>
+              <label className="setting-label">{t.settings.notificationsDescription}</label>
               <label className="toggle-switch">
                 <input
                   type="checkbox"
@@ -116,7 +116,7 @@ export function SettingsPage({
           </div>
           <div className="settings-card-body">
             <div className="setting-row">
-              <label className="setting-label">{t.settings.retentionDays}</label>
+              <label className="setting-label">{t.settings.dataRetentionDescription}</label>
               <select
                 className="setting-select"
                 value={dataRetentionDays}
@@ -142,7 +142,7 @@ export function SettingsPage({
         {/* 关于 */}
         <section className="settings-card">
           <div className="settings-card-header">
-            <h2>ℹ️ {t.settings.about}</h2>
+            <h2>ℹ️ AgentGuard</h2>
           </div>
           <div className="settings-card-body">
             <div className="about-info">
@@ -151,7 +151,7 @@ export function SettingsPage({
                 <span className="info-value">v0.1.0</span>
               </div>
               <div className="info-row">
-                <span className="info-label">{t.settings.build}</span>
+                <span className="info-label">Build</span>
                 <span className="info-value">2025.01</span>
               </div>
               <div className="info-row">

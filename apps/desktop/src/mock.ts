@@ -2,12 +2,14 @@ import type {
   ApprovalRequest,
   ApprovalStatus,
   AuditRecord,
+  AuditQuery,
   DashboardSnapshot,
   DemoRunResult,
   EnforcementAction,
   ManagedRule,
   PolicyRule,
   RuntimeEnvironment,
+  RuntimeProcessInfo,
   RuntimeStartResult,
   SampleEventKind,
 } from "./types";
@@ -170,6 +172,59 @@ export function mockLoadRuntimeEnvironment(): RuntimeEnvironment {
   };
 }
 
+export function mockLoadProcesses(limit = 80): RuntimeProcessInfo[] {
+  const now = Math.floor(Date.now() / 1000);
+  const list: RuntimeProcessInfo[] = [
+    {
+      pid: 4301,
+      name: "agentguard-daemon",
+      risk: "low",
+      status: "running",
+      cpu: 1.4,
+      memory: 47.8,
+      network: 0,
+      events: 62,
+      uptime: now % 7200,
+      command: "agentguard-daemon --bind 127.0.0.1:8790",
+      user: "rem",
+      threads: 0,
+      openFiles: 0,
+    },
+    {
+      pid: 4302,
+      name: "agentguard-proxy",
+      risk: "low",
+      status: "running",
+      cpu: 2.1,
+      memory: 55.2,
+      network: 0,
+      events: 38,
+      uptime: now % 6800,
+      command: "agentguard-proxy --bind 127.0.0.1:8787",
+      user: "rem",
+      threads: 0,
+      openFiles: 0,
+    },
+    {
+      pid: 10932,
+      name: "claude",
+      risk: "medium",
+      status: "running",
+      cpu: 8.6,
+      memory: 382.1,
+      network: 0,
+      events: 14,
+      uptime: now % 3600,
+      command: "claude --project /Users/rem/Github/agentguard",
+      user: "rem",
+      threads: 0,
+      openFiles: 0,
+    },
+  ];
+
+  return list.slice(0, Math.max(1, limit));
+}
+
 export function mockSubmitSampleEvent(kind: SampleEventKind): AuditRecord {
   const now = Date.now();
   const record = sampleRecord(kind, now);
@@ -289,6 +344,45 @@ export function mockRunRealAgentDemo(mode: "python_sdk" | "openai_proxy"): DemoR
     stderr: "",
     message: "Preview mode ran the Python SDK live demo placeholder.",
   };
+}
+
+export function mockQueryAuditLogs(query: AuditQuery): AuditRecord[] {
+  let records = [...previewRecords];
+
+  if (query.layer) {
+    records = records.filter((record) => record.event.layer === query.layer);
+  }
+
+  if (query.agent_name) {
+    const agentName = query.agent_name.toLowerCase();
+    records = records.filter((record) =>
+      record.event.agent.name.toLowerCase().includes(agentName),
+    );
+  }
+
+  if (query.operation) {
+    records = records.filter((record) => record.event.operation === query.operation);
+  }
+
+  if (query.action) {
+    records = records.filter((record) => record.decision.action === query.action);
+  }
+
+  if (query.risk_level) {
+    records = records.filter((record) => record.decision.risk === query.risk_level);
+  }
+
+  if (typeof query.start_time === "number") {
+    records = records.filter((record) => record.recorded_at_unix_ms >= query.start_time!);
+  }
+
+  if (typeof query.end_time === "number") {
+    records = records.filter((record) => record.recorded_at_unix_ms <= query.end_time!);
+  }
+
+  const offset = query.offset ?? 0;
+  const limit = query.limit ?? records.length;
+  return records.slice(offset, offset + limit);
 }
 
 function createManagedRule(rule: PolicyRule): ManagedRule {

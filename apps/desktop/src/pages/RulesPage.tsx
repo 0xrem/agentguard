@@ -40,7 +40,6 @@ export function RulesPage({
     switch (layer) {
       case 'command': return '💻';
       case 'tool': return '🔧';
-      case 'network': return '🌐';
       case 'prompt': return '💬';
       default: return '📌';
     }
@@ -110,7 +109,6 @@ export function RulesPage({
             <option value="all">{t.rules.layer}</option>
             <option value="command">Command</option>
             <option value="tool">Tool</option>
-            <option value="network">Network</option>
             <option value="prompt">Prompt</option>
           </select>
 
@@ -120,9 +118,11 @@ export function RulesPage({
             onChange={(e) => setFilterAction(e.target.value as EnforcementAction | 'all')}
           >
             <option value="all">{t.rules.action}</option>
-            <option value="blocked">Blocked</option>
-            <option value="allowed">Allowed</option>
+            <option value="block">Blocked</option>
+            <option value="allow">Allowed</option>
+            <option value="warn">Warn</option>
             <option value="ask">Ask</option>
+            <option value="kill">Kill</option>
           </select>
         </div>
       </div>
