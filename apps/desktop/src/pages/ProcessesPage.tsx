@@ -121,6 +121,62 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
     return 'Source: unavailable';
   };
 
+  const trend = useMemo(() => {
+    const now = Date.now();
+    const oneHour = now - 3_600_000;
+    const oneDay = now - 86_400_000;
+    const active1h = likelyAgentProcesses.filter((p) => (p.lastEventAtUnixMs ?? 0) >= oneHour).length;
+    const active24h = likelyAgentProcesses.filter((p) => (p.lastEventAtUnixMs ?? 0) >= oneDay).length;
+    const newAgents1h = likelyAgentProcesses.filter((p) => p.uptime <= 3600).length;
+    const highRiskUnprotected = likelyAgentProcesses.filter(
+      (p) => p.risk === 'high' && p.coverageStatus !== 'protected',
+    ).length;
+    return { active1h, active24h, newAgents1h, highRiskUnprotected };
+  }, [likelyAgentProcesses]);
+
+  const getSetupGuidance = (process: RuntimeProcessInfo) => {
+    const text = `${process.name} ${process.command}`.toLowerCase();
+    if (text.includes('claude')) {
+      return {
+        title: 'Claude Code 快速接入建议',
+        steps: [
+          '打开 Setup 页，切到 Claude Code 标签。',
+          '复制环境变量配置到 Claude 启动环境。',
+          '重启 Claude 会话后再观察本进程是否出现审计事件。',
+        ],
+      };
+    }
+    if (text.includes('cursor')) {
+      return {
+        title: 'Cursor 快速接入建议',
+        steps: [
+          '打开 Setup 页，切到 Cursor 标签。',
+          '将代理地址与 API 基地址改为 AgentGuard Proxy。',
+          '重新触发一次读写操作，确认进程出现最近审计事件。',
+        ],
+      };
+    }
+    if (text.includes('python') || text.includes('aider') || text.includes('langchain') || text.includes('llamaindex')) {
+      return {
+        title: 'Python Agent 快速接入建议',
+        steps: [
+          '打开 Setup 页，切到 Python 标签。',
+          '按文档设置 SDK/代理环境变量。',
+          '执行一次最小请求并回到进程页验证覆盖状态。',
+        ],
+      };
+    }
+
+    return {
+      title: '通用接入建议',
+      steps: [
+        '打开 Setup 页，选择与你进程最接近的集成类型。',
+        '优先配置 Proxy 模式，确保请求先经过 AgentGuard。',
+        '回到进程页刷新，确认覆盖状态变为 Protected。',
+      ],
+    };
+  };
+
   if (loading) {
     return (
       <div className="processes-page">
@@ -162,6 +218,25 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         <div className="overview-card unprotected">
           <div className="overview-label">未受保护</div>
           <div className="overview-value">{overview.unprotectedCount}</div>
+        </div>
+      </div>
+
+      <div className="processes-trend">
+        <div className="trend-item">
+          <div className="trend-label">近 1 小时活跃 Agent</div>
+          <div className="trend-value">{trend.active1h}</div>
+        </div>
+        <div className="trend-item">
+          <div className="trend-label">近 24 小时活跃 Agent</div>
+          <div className="trend-value">{trend.active24h}</div>
+        </div>
+        <div className="trend-item">
+          <div className="trend-label">近 1 小时新出现 Agent</div>
+          <div className="trend-value">{trend.newAgents1h}</div>
+        </div>
+        <div className="trend-item danger">
+          <div className="trend-label">高风险且未保护</div>
+          <div className="trend-value">{trend.highRiskUnprotected}</div>
         </div>
       </div>
 
@@ -390,6 +465,20 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
                   </div>
                 </div>
               </div>
+
+              {selectedProcess.coverageStatus !== 'protected' && (
+                <div className="detail-section">
+                  <h3>{getSetupGuidance(selectedProcess).title}</h3>
+                  <ol className="guidance-list">
+                    {getSetupGuidance(selectedProcess).steps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+                  <div className="page-actions">
+                    <button className="btn btn-primary" onClick={onOpenSetup}>前往快速接入</button>
+                  </div>
+                </div>
+              )}
 
               <div className="detail-section">
                 <h3>Activity Timeline</h3>
