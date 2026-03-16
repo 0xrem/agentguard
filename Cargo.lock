@@ -27,6 +27,7 @@ name = "agentguard-desktop"
 version = "1.0.0"
 dependencies = [
  "agentguard-models",
+ "agentguard-store",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -47,6 +48,7 @@ name = "agentguard-policy"
 version = "1.0.0"
 dependencies = [
  "agentguard-models",
+ "serde",
 ]
 
 [[package]]
@@ -55,6 +57,7 @@ version = "1.0.0"
 dependencies = [
  "agentguard-daemon",
  "agentguard-models",
+ "agentguard-policy",
  "agentguard-store",
  "axum",
  "reqwest 0.12.28",
@@ -69,6 +72,7 @@ version = "1.0.0"
 dependencies = [
  "agentguard-models",
  "rusqlite",
+ "serde",
  "serde_json",
 ]
 

@@ -11,16 +11,20 @@ import {
   mockStartLocalStack,
   mockRunRealAgentDemo,
   mockSubmitSampleEvent,
+  mockGetAuditStats,
+  mockDetectRuleConflicts,
 } from "./mock";
 import type {
   ApprovalRequest,
   AuditRecord,
   AuditQuery,
+  AuditStats,
   DashboardSnapshot,
   DemoRunResult,
   EnforcementAction,
   ManagedRule,
   PolicyRule,
+  RuleConflict,
   RuleExport,
   RuntimeEnvironment,
   RuntimeProcessInfo,
@@ -149,6 +153,22 @@ export async function queryAuditLogs(query: AuditQuery): Promise<AuditRecord[]> 
   }
 
   return invoke<AuditRecord[]>("query_audit_logs", { query });
+}
+
+export async function getAuditStats(since?: number): Promise<AuditStats> {
+  if (!isTauriRuntime()) {
+    return mockGetAuditStats(since);
+  }
+
+  return invoke<AuditStats>("get_audit_stats", { since: since ?? null });
+}
+
+export async function detectRuleConflicts(): Promise<RuleConflict[]> {
+  if (!isTauriRuntime()) {
+    return mockDetectRuleConflicts();
+  }
+
+  return invoke<RuleConflict[]>("detect_rule_conflicts");
 }
 
 function isTauriRuntime(): boolean {

@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLanguage } from '../i18n';
-import type { ManagedRule, Layer, EnforcementAction, RiskLevel } from '../types';
+import type { ManagedRule, Layer, EnforcementAction, RiskLevel, RuleConflict } from '../types';
 
 interface RulesPageProps {
   rules: ManagedRule[];
   loading: boolean;
+  conflicts: RuleConflict[];
   onAddRule: () => void;
+  onCheckConflicts: () => void;
   onAddFromTemplate: () => void;
   onEditRule: (rule: ManagedRule) => void;
   onDeleteRule: (ruleId: string) => void;
@@ -17,7 +19,9 @@ interface RulesPageProps {
 export function RulesPage({
   rules,
   loading,
+  conflicts,
   onAddRule,
+  onCheckConflicts,
   onAddFromTemplate,
   onEditRule,
   onDeleteRule,
@@ -28,6 +32,14 @@ export function RulesPage({
   const { t } = useLanguage();
   const [filterLayer, setFilterLayer] = useState<Layer | 'all'>('all');
   const [filterAction, setFilterAction] = useState<EnforcementAction | 'all'>('all');
+
+  // Re-check conflicts whenever the rules list changes
+  useEffect(() => {
+    if (rules.length > 0) {
+      onCheckConflicts();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rules.length]);
 
   const filteredRules = rules.filter((rule) => {
     if (filterLayer !== 'all' && rule.rule.layer !== filterLayer) return false;
@@ -98,6 +110,30 @@ export function RulesPage({
         </div>
       </header>
 
+      {/* 规则冲突警告面板 */}
+      {conflicts.length > 0 && (
+        <div className="rule-conflicts-panel">
+          <div className="rule-conflicts-header">
+            <span className="rule-conflicts-icon">⚠️</span>
+            <span className="rule-conflicts-title">检测到 {conflicts.length} 个规则冲突</span>
+            <button className="btn btn-text btn-sm" onClick={onCheckConflicts}>重新检测</button>
+          </div>
+          <ul className="rule-conflicts-list">
+            {conflicts.map((conflict, i) => (
+              <li key={i} className="rule-conflict-item">
+                <span className={`conflict-kind-badge ${conflict.kind}`}>
+                  {conflict.kind === 'action_conflict' ? '动作冲突' : '规则遮蔽'}
+                </span>
+                <span className="conflict-rules">
+                  <code>{conflict.rule_a_id}</code>{' ↔ '}<code>{conflict.rule_b_id}</code>
+                </span>
+                <span className="conflict-description">{conflict.description}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* 筛选器 */}
       <div className="filters-bar">
         <div className="filters-group">
@@ -145,46 +181,39 @@ export function RulesPage({
           <tbody>
             {filteredRules.length > 0 ? (
               filteredRules.map((rule) => (
-                <tr key={rule.id} className="rule-row">
-                  <td className="toggle-cell">
-                    <label className="toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={rule.enabled}
-                        onChange={(e) => onToggleRule(rule.id, e.target.checked)}
-                      />
-                      <span className="toggle-slider"></span>
-                    </label>
-                  </td>
-                  <td className="rule-name">
-                    <div className="rule-icon">{getLayerIcon(rule.rule.layer)}</div>
-                    <span>{rule.rule.reason || 'Unnamed Rule'}</span>
-                  </td>
+                <tr key={rule.id}>
                   <td>
-                    <span className="badge">{rule.rule.layer || 'Any'}</span>
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled}
+                      onChange={(e) => onToggleRule(rule.id, e.target.checked)}
+                    />
                   </td>
-                  <td className="operation">{rule.rule.operation || 'Any'}</td>
-                  <td className="action">
-                    <span className="action-icon">{getActionIcon(rule.rule.action)}</span>
-                    <span className={`action-label ${rule.rule.action}`}>{rule.rule.action}</span>
-                  </td>
-                  <td className="priority">{rule.rule.priority}</td>
-                  <td className="risk">
-                    <span 
-                      className="risk-badge"
-                      style={{ backgroundColor: getRiskColor(rule.rule.minimum_risk) }}
-                    >
-                      {rule.rule.minimum_risk || 'Any'}
+                  <td>{rule.rule.reason || rule.rule.id}</td>
+                  <td>
+                    <span className="layer-badge">
+                      {getLayerIcon(rule.rule.layer)} {rule.rule.layer ?? '—'}
                     </span>
                   </td>
-                  <td className="actions">
-                    <button 
+                  <td className="operation-cell">{rule.rule.operation ?? '—'}</td>
+                  <td>
+                    <span className={`action-badge action-${rule.rule.action}`}>
+                      {getActionIcon(rule.rule.action)} {rule.rule.action}
+                    </span>
+                  </td>
+                  <td>{rule.rule.priority}</td>
+                  <td>
+                    <span className="risk-dot" style={{ color: getRiskColor(rule.rule.minimum_risk) }}>●</span>
+                    {' '}{rule.rule.minimum_risk ?? '—'}
+                  </td>
+                  <td className="rule-actions">
+                    <button
                       className="btn btn-sm btn-secondary"
                       onClick={() => onEditRule(rule)}
                     >
                       {t.rules.edit}
                     </button>
-                    <button 
+                    <button
                       className="btn btn-sm btn-danger"
                       onClick={() => onDeleteRule(rule.id)}
                     >

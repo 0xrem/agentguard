@@ -217,3 +217,19 @@ export interface AuditQuery {
   limit?: number;
   offset?: number;
 }
+
+export interface AuditStats {
+  since_unix_ms: number;
+  total: number;
+  by_action: Record<string, number>;
+  by_risk: Record<string, number>;
+  by_layer: Record<string, number>;
+  top_agents: [string, number][];
+}
+
+export interface RuleConflict {
+  kind: "action_conflict" | "shadowed";
+  rule_a_id: string;
+  rule_b_id: string;
+  description: string;
+}

@@ -1,7 +1,9 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import {
   deletePolicyRule,
+  detectRuleConflicts,
   exportRules,
+  getAuditStats,
   importRules,
   loadDashboard,
   loadProcesses,
@@ -27,7 +29,9 @@ import type {
   ApprovalRequest,
   AuditRecord,
   AuditQuery,
+  AuditStats,
   DashboardSnapshot,
+  RuleConflict,
   DemoRunResult,
   EnforcementAction,
   Layer,
@@ -197,6 +201,9 @@ export default function App() {
   });
   const [autoStartAttempted, setAutoStartAttempted] = useState(false);
 
+  const [auditStats, setAuditStats] = useState<AuditStats | null>(null);
+  const [ruleConflicts, setRuleConflicts] = useState<RuleConflict[]>([]);
+
   useEffect(() => {
     void refreshDashboard(true);
 
@@ -264,13 +271,15 @@ export default function App() {
     }
 
     try {
-      const [nextSnapshot, nextRuntimeEnvironment, nextProcesses] = await Promise.all([
+      const [nextSnapshot, nextRuntimeEnvironment, nextProcesses, nextStats] = await Promise.all([
         loadDashboard(30),
         loadRuntimeEnvironment(),
         loadProcesses(120).catch(() => []),
+        getAuditStats(Date.now() - 86_400_000).catch(() => null),
       ]);
       setError(null);
       startTransition(() => {
+        if (nextStats) setAuditStats(nextStats);
         setSnapshot(nextSnapshot);
         setRuntimeEnvironment(nextRuntimeEnvironment);
         setProcesses(smoothRuntimeProcesses(nextProcesses, processNetworkCacheRef.current));
@@ -873,6 +882,7 @@ export default function App() {
       {currentPage === 'dashboard' && (
         <Dashboard
           snapshot={snapshot}
+          auditStats={auditStats}
           refreshing={refreshing}
           error={error}
           selectedScenario={selectedScenario}
@@ -944,6 +954,7 @@ export default function App() {
         <RulesPage
           rules={rememberedRules}
           loading={loading}
+          conflicts={ruleConflicts}
           onAddRule={handleAddNewRule}
           onAddFromTemplate={handleAddFromTemplate}
           onEditRule={handleEditRule}
@@ -951,6 +962,7 @@ export default function App() {
           onToggleRule={handleToggleRule}
           onExportRules={handleExportRules}
           onImportRules={triggerImportRules}
+          onCheckConflicts={() => detectRuleConflicts().then(setRuleConflicts).catch(() => {})}
         />
       )}
       

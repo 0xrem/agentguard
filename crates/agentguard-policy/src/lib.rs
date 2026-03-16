@@ -1,6 +1,7 @@
 use agentguard_models::{
     Decision, EnforcementAction, Event, Layer, MatchPattern, Operation, RiskLevel, Rule,
 };
+use serde::Serialize;
 
 pub struct PolicyEngine {
     rules: Vec<Rule>,
@@ -210,13 +211,146 @@ const DANGEROUS_COMMAND_PATTERNS: &[&str] = &[
 ];
 
 const SENSITIVE_PATH_MARKERS: &[&str] =
-    &["/.ssh/", "/.aws/", "/.gnupg/", "/etc/", ".env", "id_rsa"];
+    &["/.ssh/", "/.aws/", "/.gnupg/", "/etc/", ".env", "id_rsa", "/.git-credentials", "/.netrc"];
 
 const PROMPT_INJECTION_MARKERS: &[&str] = &[
     "ignore previous instructions",
+    "ignore all previous",
+    "disregard the above",
     "reveal your system prompt",
+    "show me your instructions",
     "upload credentials",
+    "exfiltrate",
+    "bypass safety",
+    "jailbreak",
+    "act as if",
+    "pretend you are",
+    "you are now",
+    "new persona",
 ];
+
+/// Detects known API key / secret patterns in text that may indicate data leakage risk.
+/// Returns a list of (kind, redacted_hint) pairs for each finding.
+pub fn scan_for_secrets(text: &str) -> Vec<(String, String)> {
+    const PATTERNS: &[(&str, &str)] = &[
+        ("openai_api_key",     "sk-"),
+        ("anthropic_api_key",  "sk-ant-"),
+        ("github_token",       "ghp_"),
+        ("github_token",       "ghs_"),
+        ("aws_access_key",     "AKIA"),
+        ("stripe_key",         "sk_live_"),
+        ("stripe_key",         "pk_live_"),
+        ("slack_token",        "xoxb-"),
+        ("slack_token",        "xoxp-"),
+        ("google_api_key",     "AIza"),
+    ];
+
+    let mut findings = Vec::new();
+    for (kind, prefix) in PATTERNS {
+        if text.contains(prefix) {
+            // Find the token start position and return an obfuscated hint
+            if let Some(pos) = text.find(prefix) {
+                let start = pos + prefix.len();
+                let visible: String = text[start..].chars().take(4).collect();
+                findings.push((kind.to_string(), format!("{}{}...", prefix, visible)));
+            }
+        }
+    }
+    findings
+}
+
+// ── Rule Conflict Detection ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictKind {
+    /// Two rules target the same scope with opposing actions; the lower-priority one is
+    /// effectively unreachable when the overlapping target matches.
+    ActionConflict,
+    /// A broader rule at higher priority makes the narrower one effectively unreachable.
+    Shadowed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleConflict {
+    pub kind: ConflictKind,
+    pub rule_a_id: String,
+    pub rule_b_id: String,
+    pub description: String,
+}
+
+/// Detect pairwise conflicts in a list of rules.
+/// Both positional ordering (priority) and semantic scope are considered.
+pub fn detect_conflicts(rules: &[Rule]) -> Vec<RuleConflict> {
+    let mut conflicts = Vec::new();
+
+    // Sort by priority descending so rule_a always has higher (or equal) priority.
+    let mut sorted: Vec<&Rule> = rules.iter().collect();
+    sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    for i in 0..sorted.len() {
+        for j in (i + 1)..sorted.len() {
+            let a = sorted[i];
+            let b = sorted[j];
+
+            if !scopes_overlap(a, b) {
+                continue;
+            }
+
+            if a.action != b.action {
+                let description = format!(
+                    "Rule '{}' ({:?}) and rule '{}' ({:?}) overlap in scope but have conflicting actions ({:?} vs {:?}). The higher-priority rule '{}' will shadow '{}' for matching events.",
+                    a.id, a.action, b.id, b.action, a.action, b.action, a.id, b.id
+                );
+                conflicts.push(RuleConflict {
+                    kind: ConflictKind::ActionConflict,
+                    rule_a_id: a.id.clone(),
+                    rule_b_id: b.id.clone(),
+                    description,
+                });
+            } else if target_a_broader_than_b(a, b) {
+                let description = format!(
+                    "Rule '{}' has a broader target pattern than '{}' and higher priority with the same action — '{}' may never fire.",
+                    a.id, b.id, b.id
+                );
+                conflicts.push(RuleConflict {
+                    kind: ConflictKind::Shadowed,
+                    rule_a_id: a.id.clone(),
+                    rule_b_id: b.id.clone(),
+                    description,
+                });
+            }
+        }
+    }
+
+    conflicts
+}
+
+fn scopes_overlap(a: &Rule, b: &Rule) -> bool {
+    // Layer must match or at least one is None (matches any layer)
+    let layer_overlap = match (a.layer, b.layer) {
+        (None, _) | (_, None) => true,
+        (Some(la), Some(lb)) => la == lb,
+    };
+    if !layer_overlap {
+        return false;
+    }
+
+    // Operation must match or at least one is None
+    let op_overlap = match (a.operation, b.operation) {
+        (None, _) | (_, None) => true,
+        (Some(oa), Some(ob)) => oa == ob,
+    };
+
+    op_overlap
+}
+
+fn target_a_broader_than_b(a: &Rule, b: &Rule) -> bool {
+    // Any target is always broader
+    matches!(a.target, MatchPattern::Any)
+        && !matches!(b.target, MatchPattern::Any)
+}
+
 
 #[cfg(test)]
 mod tests {

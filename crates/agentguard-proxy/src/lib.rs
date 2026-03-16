@@ -12,6 +12,7 @@ use agentguard_models::{
     AgentIdentity, ApprovalRequest, AuditRecord, EnforcementAction, EvaluateEventRequest,
     EvaluationOutcome, EvaluationStatus, Event, Layer, Operation, ResourceTarget,
 };
+use agentguard_policy::scan_for_secrets;
 use agentguard_store::AuditStore;
 use axum::{
     Json, Router,
@@ -175,6 +176,16 @@ impl PromptGuardService {
 
         if let Some(model) = model {
             event = event.with_metadata("model", model);
+        }
+
+        // Prompt Guard: scan for leaked secrets / API keys in the prompt text.
+        let secret_findings = scan_for_secrets(prompt_text);
+        if !secret_findings.is_empty() {
+            let kinds: Vec<String> = secret_findings.iter().map(|(k, _hint): &(String, String)| k.clone()).collect();
+            event = event
+                .with_metadata("prompt_guard_secret_detected", "true")
+                .with_metadata("prompt_guard_secret_kinds", kinds.join(","))
+                .with_metadata("sensitive", "true");
         }
 
         let evaluation = self

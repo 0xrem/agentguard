@@ -12,7 +12,7 @@ use agentguard_models::{
     ResolveApprovalRequest, Rule,
 };
 use agentguard_policy::{PolicyEngine, default_rules};
-use agentguard_store::{AuditRecordQuery, AuditStore, StoreError};
+use agentguard_store::{AuditRecordQuery, AuditStats, AuditStore, StoreError};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -98,6 +98,10 @@ impl AgentGuardDaemon {
 
     pub fn query_audit_records(&self, query: &AuditRecordQuery) -> Result<Vec<AuditRecord>> {
         self.store.query_audit_records(query).map_err(Into::into)
+    }
+
+    pub fn audit_stats(&self, since_unix_ms: i64) -> Result<AuditStats> {
+        self.store.audit_stats(since_unix_ms).map_err(Into::into)
     }
 
     pub fn list_approval_requests(
@@ -366,14 +370,21 @@ struct RuleListQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct AuditStatsQuery {
+    since: Option<i64>,
+}
+
 pub fn app(daemon: AgentGuardDaemon) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/events", post(create_event))
         .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
+        .route("/v1/audit/stats", get(get_audit_stats))
         .route("/v1/approvals", get(list_approval_requests))
         .route("/v1/rules", get(list_rules).post(create_rule))
+        .route("/v1/rules/conflicts", get(list_rule_conflicts))
         .route("/v1/rules/{rule_id}/enable", post(enable_rule))
         .route("/v1/rules/{rule_id}/disable", post(disable_rule))
         .route("/v1/rules/{rule_id}", axum::routing::delete(delete_rule))
@@ -499,6 +510,36 @@ async fn list_rules(
     let limit = query.limit.unwrap_or(250).min(500);
     let rules = state.daemon.lock().map_err(lock_error)?.list_rules()?;
     Ok(Json(rules.into_iter().take(limit).collect()))
+}
+
+async fn get_audit_stats(
+    State(state): State<ApiState>,
+    Query(query): Query<AuditStatsQuery>,
+) -> std::result::Result<Json<AuditStats>, DaemonApiError> {
+    // Default: last 24 hours
+    let since = query.since.unwrap_or_else(|| {
+        let now =
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+        now - 86_400_000
+    });
+    let stats = state.daemon.lock().map_err(lock_error)?.audit_stats(since)?;
+    Ok(Json(stats))
+}
+
+async fn list_rule_conflicts(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<Vec<agentguard_policy::RuleConflict>>, DaemonApiError> {
+    let managed_rules = state.daemon.lock().map_err(lock_error)?.list_rules()?;
+    let rules: Vec<_> = managed_rules
+        .into_iter()
+        .filter(|mr| mr.enabled)
+        .map(|mr| mr.rule)
+        .collect();
+    let conflicts = agentguard_policy::detect_conflicts(&rules);
+    Ok(Json(conflicts))
 }
 
 async fn create_rule(

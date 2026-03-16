@@ -3,7 +3,9 @@ import type {
   ApprovalStatus,
   AuditRecord,
   AuditQuery,
+  AuditStats,
   DashboardSnapshot,
+  RuleConflict,
   DemoRunResult,
   EnforcementAction,
   ManagedRule,
@@ -347,6 +349,21 @@ export function mockRunRealAgentDemo(mode: "python_sdk" | "openai_proxy"): DemoR
     stderr: "",
     message: "Preview mode ran the Python SDK live demo placeholder.",
   };
+}
+
+export function mockGetAuditStats(_since?: number): AuditStats {
+  return {
+    since_unix_ms: Date.now() - 86_400_000,
+    total: previewRecords.length,
+    by_action: { block: 1, warn: 1, allow: 1 },
+    by_risk: { high: 2, low: 1 },
+    by_layer: { prompt: 1, tool: 2 },
+    top_agents: [["Preview Claude Code", 1], ["Preview AutoGPT", 1], ["Preview Coding Assistant", 1]],
+  };
+}
+
+export function mockDetectRuleConflicts(): RuleConflict[] {
+  return [];
 }
 
 export function mockQueryAuditLogs(query: AuditQuery): AuditRecord[] {

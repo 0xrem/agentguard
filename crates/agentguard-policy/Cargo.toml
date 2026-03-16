@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 agentguard-models.workspace = true
+serde.workspace = true

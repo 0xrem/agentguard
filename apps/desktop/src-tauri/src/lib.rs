@@ -11,6 +11,7 @@ use agentguard_models::{
     ApprovalRequest, AuditRecord, EnforcementAction, Event, ManagedRule, ResolveApprovalRequest,
     Rule,
 };
+use agentguard_store;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -117,6 +118,26 @@ struct RuleExport {
 #[derive(Debug, Deserialize)]
 struct RuleImport {
     export_data: RuleExport,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct AuditStats {
+    since_unix_ms: i64,
+    total: usize,
+    by_action: std::collections::BTreeMap<String, usize>,
+    by_risk: std::collections::BTreeMap<String, usize>,
+    by_layer: std::collections::BTreeMap<String, usize>,
+    top_agents: Vec<(String, usize)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct RuleConflict {
+    kind: String,
+    rule_a_id: String,
+    rule_b_id: String,
+    description: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -448,6 +469,77 @@ async fn query_audit_logs(
         .json::<Vec<AuditRecord>>()
         .await
         .map_err(|error| format!("failed to decode audit logs: {error}"))
+}
+
+#[tauri::command]
+async fn get_audit_stats(
+    state: tauri::State<'_, DesktopState>,
+    since: Option<i64>,
+) -> Result<AuditStats, String> {
+    let since_param = since.map(|s| s.to_string());
+    let mut url = format!("{}/v1/audit/stats", state.daemon_url);
+    if let Some(since_val) = &since_param {
+        url = format!("{url}?since={since_val}");
+    }
+
+    let response = state
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch audit stats: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("failed to fetch audit stats: {}", response.status()));
+    }
+
+    let store_stats = response
+        .json::<agentguard_store::AuditStats>()
+        .await
+        .map_err(|error| format!("failed to decode audit stats: {error}"))?;
+
+    Ok(AuditStats {
+        since_unix_ms: store_stats.since_unix_ms,
+        total: store_stats.total,
+        by_action: store_stats.by_action,
+        by_risk: store_stats.by_risk,
+        by_layer: store_stats.by_layer,
+        top_agents: store_stats.top_agents,
+    })
+}
+
+#[tauri::command]
+async fn detect_rule_conflicts(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Vec<RuleConflict>, String> {
+    let url = format!("{}/v1/rules/conflicts", state.daemon_url);
+    let response = state
+        .client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch rule conflicts: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("failed to fetch rule conflicts: {}", response.status()));
+    }
+
+    let raw: Vec<serde_json::Value> = response
+        .json()
+        .await
+        .map_err(|error| format!("failed to decode rule conflicts: {error}"))?;
+
+    Ok(raw
+        .into_iter()
+        .filter_map(|v| {
+            Some(RuleConflict {
+                kind: v.get("kind")?.as_str()?.to_string(),
+                rule_a_id: v.get("rule_a_id")?.as_str()?.to_string(),
+                rule_b_id: v.get("rule_b_id")?.as_str()?.to_string(),
+                description: v.get("description")?.as_str()?.to_string(),
+            })
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1847,6 +1939,8 @@ pub fn run() {
             export_policy_rules,
             import_policy_rules,
             query_audit_logs,
+            get_audit_stats,
+            detect_rule_conflicts,
             list_runtime_processes
         ])
         .run(tauri::generate_context!())

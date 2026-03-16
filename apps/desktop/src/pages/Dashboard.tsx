@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useLanguage } from '../i18n';
-import type { DashboardSnapshot, RuntimeEnvironment, RuntimeProcessInfo, SampleEventKind, AuditRecord, PolicyRule } from '../types';
-import { startLocalStack, runRealAgentDemo } from '../api';
+import type { AuditStats, DashboardSnapshot, RuntimeEnvironment, RuntimeProcessInfo, SampleEventKind, AuditRecord } from '../types';
 
 interface ProtectionAlert {
   id: string;
@@ -18,6 +17,7 @@ interface ProtectionFixResult {
 
 interface DashboardProps {
   snapshot: DashboardSnapshot | null;
+  auditStats: AuditStats | null;
   refreshing: boolean;
   error: string | null;
   selectedScenario: SampleEventKind;
@@ -46,6 +46,7 @@ interface DashboardProps {
 
 export function Dashboard({
   snapshot,
+  auditStats,
   refreshing,
   error,
   selectedScenario,
@@ -158,6 +159,60 @@ export function Dashboard({
         </div>
       </div>
 
+      {/* 24h 统计面板 */}
+      {auditStats && auditStats.total > 0 && (
+        <div className="section">
+          <h2>过去 24 小时活动概览</h2>
+          <div className="stats-grid stats-grid-sm">
+            <div className="stat-card">
+              <div className="stat-icon">📊</div>
+              <div className="stat-content">
+                <div className="stat-value">{auditStats.total}</div>
+                <div className="stat-label">总事件</div>
+              </div>
+            </div>
+            <div className="stat-card blocked">
+              <div className="stat-icon">🚫</div>
+              <div className="stat-content">
+                <div className="stat-value">{auditStats.by_action['block'] ?? 0}</div>
+                <div className="stat-label">已拦截</div>
+              </div>
+            </div>
+            <div className="stat-card pending">
+              <div className="stat-icon">⏳</div>
+              <div className="stat-content">
+                <div className="stat-value">{auditStats.by_action['ask'] ?? 0}</div>
+                <div className="stat-label">待审批</div>
+              </div>
+            </div>
+            <div className="stat-card allowed">
+              <div className="stat-icon">✅</div>
+              <div className="stat-content">
+                <div className="stat-value">{auditStats.by_action['allow'] ?? 0}</div>
+                <div className="stat-label">已放行</div>
+              </div>
+            </div>
+          </div>
+          {auditStats.top_agents.length > 0 && (
+            <div className="top-agents-row">
+              <span className="top-agents-label">活跃 Agent：</span>
+              {auditStats.top_agents.slice(0, 5).map(([name, count]) => (
+                <span key={name} className="agent-pill">
+                  {name} <span className="agent-pill-count">{count}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="risk-breakdown-row">
+            {Object.entries(auditStats.by_risk).map(([risk, count]) => (
+              <span key={risk} className={`risk-badge risk-${risk}`}>
+                {risk}: {count}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 运行状态 */}
       <div className="section">
         <h2>{t.dashboard.runtimeStatus}</h2>
@@ -208,8 +263,7 @@ export function Dashboard({
                 key={alert.id}
                 className={`protection-alert ${alert.severity}`}
               >
-                <div className="protection-alert-title">{alert.message}</div>
-                <div className="protection-alert-processes">
+                    <div className="protection-alert-processes">
                   {alert.processes.map((process) => (
                     <span key={process.pid} className="protection-process-pill">
                       {process.risk === 'high' ? '🔴' : process.risk === 'medium' ? '🟠' : '🟢'} {process.name} (pid {process.pid})

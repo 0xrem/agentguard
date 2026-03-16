@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     collections::BTreeSet,
     error::Error,
     fmt, fs, io,
@@ -11,6 +12,7 @@ use agentguard_models::{
     Rule,
 };
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
+use serde::Serialize;
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -643,6 +645,75 @@ impl AuditStore {
             .map_err(StoreError::from)
     }
 
+    pub fn audit_stats(&self, since_unix_ms: i64) -> Result<AuditStats> {
+        let total: usize = self.connection.query_row(
+            "SELECT COUNT(*) FROM audit_records WHERE recorded_at_unix_ms >= ?1",
+            params![since_unix_ms],
+            |row| row.get::<_, i64>(0),
+        )? as usize;
+
+        let mut by_action: BTreeMap<String, usize> = BTreeMap::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT action, COUNT(*) FROM audit_records WHERE recorded_at_unix_ms >= ?1 GROUP BY action",
+            )?;
+            let rows = stmt.query_map(params![since_unix_ms], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            for row in rows {
+                let (k, v) = row?;
+                by_action.insert(k, v);
+            }
+        }
+
+        let mut by_risk: BTreeMap<String, usize> = BTreeMap::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT risk, COUNT(*) FROM audit_records WHERE recorded_at_unix_ms >= ?1 GROUP BY risk",
+            )?;
+            let rows = stmt.query_map(params![since_unix_ms], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            for row in rows {
+                let (k, v) = row?;
+                by_risk.insert(k, v);
+            }
+        }
+
+        let mut by_layer: BTreeMap<String, usize> = BTreeMap::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT layer, COUNT(*) FROM audit_records WHERE recorded_at_unix_ms >= ?1 GROUP BY layer",
+            )?;
+            let rows = stmt.query_map(params![since_unix_ms], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            for row in rows {
+                let (k, v) = row?;
+                by_layer.insert(k, v);
+            }
+        }
+
+        let top_agents: Vec<(String, usize)> = {
+            let mut stmt = self.connection.prepare(
+                "SELECT agent_name, COUNT(*) as cnt FROM audit_records WHERE recorded_at_unix_ms >= ?1 GROUP BY agent_name ORDER BY cnt DESC LIMIT 5",
+            )?;
+            let rows = stmt.query_map(params![since_unix_ms], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        Ok(AuditStats {
+            since_unix_ms,
+            total,
+            by_action,
+            by_risk,
+            by_layer,
+            top_agents,
+        })
+    }
+
     fn initialize(&self) -> Result<()> {
         self.connection.execute_batch(SCHEMA)?;
         self.migrate_policy_rules_table()?;
@@ -684,6 +755,16 @@ impl AuditStore {
         rows.collect::<std::result::Result<BTreeSet<_>, _>>()
             .map_err(StoreError::from)
     }
+}
+
+#[derive(Debug, Serialize, serde::Deserialize)]
+pub struct AuditStats {
+    pub since_unix_ms: i64,
+    pub total: usize,
+    pub by_action: BTreeMap<String, usize>,
+    pub by_risk: BTreeMap<String, usize>,
+    pub by_layer: BTreeMap<String, usize>,
+    pub top_agents: Vec<(String, usize)>,
 }
 
 fn managed_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedRule> {
