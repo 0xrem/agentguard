@@ -28,11 +28,13 @@ interface DashboardProps {
   runtimeEnvironment: RuntimeEnvironment | null;
   runtimeIssues: string[];
   protectionAlerts: ProtectionAlert[];
+  coverageRegressions: RuntimeProcessInfo[];
   lastProtectionFix: ProtectionFixResult | null;
   onDismissProtectionAlert: (id: string) => void;
   onDismissProtectionWarnings: () => void;
   onProtectionQuickFix: () => void;
   onOpenSetup: () => void;
+  onOpenProcesses: () => void;
   onStartLocalStack: () => void;
   startingStack: boolean;
   stackResult: { mode: string; command: string; exit_code: number | null; stdout: string; stderr: string; message: string } | null;
@@ -57,11 +59,13 @@ export function Dashboard({
   runtimeEnvironment,
   runtimeIssues,
   protectionAlerts,
+  coverageRegressions,
   lastProtectionFix,
   onDismissProtectionAlert,
   onDismissProtectionWarnings,
   onProtectionQuickFix,
   onOpenSetup,
+  onOpenProcesses,
   onStartLocalStack,
   startingStack,
   stackResult,
@@ -238,6 +242,32 @@ export function Dashboard({
           </div>
         </div>
       </div>
+
+      {coverageRegressions.length > 0 && (
+        <div className="section">
+          <h2>覆盖退化告警</h2>
+          <div className="protection-alert-list">
+            {coverageRegressions.slice(0, 6).map((process) => (
+              <div key={`coverage-regression-${process.pid}`} className="protection-alert warning">
+                <div className="protection-alert-processes">
+                  <span className="protection-process-pill">
+                    🔴 {process.name} (pid {process.pid}) · {process.coverageStatus}
+                  </span>
+                </div>
+                <div className="setting-description">{process.coverageReason}</div>
+              </div>
+            ))}
+            <div className="protection-batch-actions">
+              <button className="btn btn-secondary btn-sm" onClick={onOpenProcesses}>
+                去进程页排查
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={onOpenSetup}>
+                去快速接入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="section">
         <h2>{t.dashboard.protectionAlerts}</h2>

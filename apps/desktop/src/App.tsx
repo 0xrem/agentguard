@@ -190,12 +190,14 @@ export default function App() {
   });
   const [darkMode, setDarkMode] = useState(false);
   const [processes, setProcesses] = useState<RuntimeProcessInfo[]>([]);
+  const [coverageRegressions, setCoverageRegressions] = useState<RuntimeProcessInfo[]>([]);
   const [processesLoading, setProcessesLoading] = useState(false);
   const [alertCooldownUntil, setAlertCooldownUntil] = useState<Record<string, number>>({});
   const [lastProtectionFix, setLastProtectionFix] = useState<ProtectionFixResult | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dataRetentionDays, setDataRetentionDays] = useState(30);
   const processNetworkCacheRef = useRef<Record<number, number>>({});
+  const previousCoverageRef = useRef<Record<number, RuntimeProcessInfo["coverageStatus"]>>({});
   const [autoStartStack, setAutoStartStack] = useState<boolean>(() => {
     try {
       const raw = window.localStorage.getItem(AUTO_START_STACK_KEY);
@@ -847,6 +849,22 @@ export default function App() {
     [processes],
   );
 
+  useEffect(() => {
+    const nextMap: Record<number, RuntimeProcessInfo["coverageStatus"]> = {};
+    const degraded: RuntimeProcessInfo[] = [];
+
+    for (const process of likelyAgentProcesses) {
+      const previous = previousCoverageRef.current[process.pid];
+      if (previous === "protected" && process.coverageStatus !== "protected") {
+        degraded.push(process);
+      }
+      nextMap[process.pid] = process.coverageStatus;
+    }
+
+    previousCoverageRef.current = nextMap;
+    setCoverageRegressions(degraded);
+  }, [likelyAgentProcesses]);
+
   const protectionAlerts = useMemo<ProtectionAlert[]>(() => {
     if (likelyAgentProcesses.length === 0) {
       return [];
@@ -875,7 +893,9 @@ export default function App() {
       }));
     }
 
-    const unprotected = enrichedAgentProcesses.filter((process) => process.events === 0);
+    const unprotected = enrichedAgentProcesses.filter(
+      (process) => process.coverageStatus === "likely_unprotected",
+    );
     if (unprotected.length > 0) {
       rawAlerts.push({
         severity: "warning",
@@ -933,11 +953,13 @@ export default function App() {
           runtimeEnvironment={runtimeEnvironment}
           runtimeIssues={runtimeIssues}
           protectionAlerts={protectionAlerts}
+          coverageRegressions={coverageRegressions}
           lastProtectionFix={lastProtectionFix}
           onDismissProtectionAlert={dismissProtectionAlert}
           onDismissProtectionWarnings={() => dismissProtectionAlertsBySeverity("warning")}
           onProtectionQuickFix={() => void handleProtectionQuickFix()}
           onOpenSetup={() => setCurrentPage('setup')}
+          onOpenProcesses={() => setCurrentPage('processes')}
           onStartLocalStack={handleStartLocalStack}
           startingStack={startingStack}
           stackResult={stackResult ? {
