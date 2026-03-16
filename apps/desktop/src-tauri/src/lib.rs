@@ -549,37 +549,84 @@ async fn list_runtime_processes(
     });
     processes.truncate(limit);
 
+    let network_kbps_by_pid = collect_network_kbps_by_pid();
+
     for process in &mut processes {
-        let (open_files, network_sockets) = collect_process_lsof_metrics(process.pid);
+        let open_files = collect_process_open_file_count(process.pid);
         process.open_files = open_files;
-        process.network = network_sockets;
+        process.network = network_kbps_by_pid
+            .get(&process.pid)
+            .copied()
+            .unwrap_or(0);
     }
 
     Ok(processes)
 }
 
-fn collect_process_lsof_metrics(pid: u32) -> (u32, u64) {
+fn collect_network_kbps_by_pid() -> HashMap<u32, u64> {
+    let output = match Command::new("nettop")
+        .args(["-P", "-x", "-n", "-d", "-s", "1", "-L", "2"])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return HashMap::new(),
+    };
+
+    let stdout = match String::from_utf8(output.stdout) {
+        Ok(stdout) => stdout,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut sample_index = 0u8;
+    let mut map: HashMap<u32, u64> = HashMap::new();
+
+    for line in stdout.lines() {
+        if line.starts_with("time,") {
+            sample_index = sample_index.saturating_add(1);
+            continue;
+        }
+
+        // Keep only the second sample in delta mode (near-window traffic).
+        if sample_index < 2 {
+            continue;
+        }
+
+        let columns: Vec<&str> = line.split(',').collect();
+        if columns.len() < 6 {
+            continue;
+        }
+
+        let proc_field = columns[1].trim();
+        let pid = match parse_nettop_proc_pid(proc_field) {
+            Some(pid) => pid,
+            None => continue,
+        };
+
+        let bytes_in = columns[4].trim().parse::<u64>().unwrap_or(0);
+        let bytes_out = columns[5].trim().parse::<u64>().unwrap_or(0);
+        let kbps = (bytes_in.saturating_add(bytes_out)) / 1024;
+        map.insert(pid, kbps);
+    }
+
+    map
+}
+
+fn parse_nettop_proc_pid(proc_field: &str) -> Option<u32> {
+    let (_, pid_text) = proc_field.rsplit_once('.')?;
+    pid_text.trim().parse::<u32>().ok()
+}
+
+fn collect_process_open_file_count(pid: u32) -> u32 {
     let pid_string = pid.to_string();
 
-    let open_files = Command::new("lsof")
+    Command::new("lsof")
         .args(["-nP", "-p", pid_string.as_str()])
         .output()
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|stdout| stdout.lines().skip(1).count() as u32)
-        .unwrap_or(0);
-
-    let network_sockets = Command::new("lsof")
-        .args(["-nP", "-i", "-a", "-p", pid_string.as_str()])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|stdout| stdout.lines().skip(1).count() as u64)
-        .unwrap_or(0);
-
-    (open_files, network_sockets)
+        .unwrap_or(0)
 }
 
 fn map_ps_state(state: &str) -> String {
