@@ -24,7 +24,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
     return AGENT_PATTERNS.some((pattern) => pattern.test(text));
   };
 
-  const isProtected = (process: RuntimeProcessInfo) => process.events > 0;
+  const isProtected = (process: RuntimeProcessInfo) => process.coverageStatus === 'protected';
   const riskWeight = (risk: RuntimeProcessInfo['risk']) => (risk === 'high' ? 3 : risk === 'medium' ? 2 : 1);
 
   const likelyAgentProcesses = useMemo(
@@ -59,7 +59,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
   const overview = useMemo(() => {
     const scoped = likelyAgentProcesses;
     const protectedCount = scoped.filter((p) => isProtected(p)).length;
-    const unprotected = scoped.filter((p) => !isProtected(p));
+    const unprotected = scoped.filter((p) => p.coverageStatus === 'likely_unprotected');
 
     return {
       totalAgents: scoped.length,
@@ -224,7 +224,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
                 <span className="process-pid">PID: {process.pid}</span>
               </div>
               <div className={`coverage-chip ${isProtected(process) ? 'protected' : 'unprotected'}`}>
-                {isProtected(process) ? 'Protected' : 'Unprotected'}
+                {isProtected(process) ? 'Protected' : process.coverageStatus === 'likely_unprotected' ? 'Likely Unprotected' : 'Unknown'}
               </div>
               <div className={`risk-chip ${process.risk}`}>{process.risk.toUpperCase()}</div>
               <div 
@@ -281,6 +281,9 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
               >
                 {t.processes.viewDetails}
               </button>
+            </div>
+            <div className="process-coverage-reason">
+              {process.coverageReason}
             </div>
           </div>
         ))}
@@ -360,6 +363,32 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
               <div className="detail-section">
                 <h3>Network Source</h3>
                 <div className="setting-description">{networkSourceLabel(selectedProcess.networkSource)}</div>
+              </div>
+
+              <div className="detail-section">
+                <h3>Coverage Proof</h3>
+                <div className="detail-grid">
+                  <div className="detail-row">
+                    <span className="detail-label">Status:</span>
+                    <span className="detail-value">{selectedProcess.coverageStatus}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Confidence:</span>
+                    <span className="detail-value">{selectedProcess.coverageConfidence}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Last Event:</span>
+                    <span className="detail-value">
+                      {selectedProcess.lastEventAtUnixMs
+                        ? new Date(selectedProcess.lastEventAtUnixMs).toLocaleString()
+                        : 'No linked event'}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Reason:</span>
+                    <span className="detail-value">{selectedProcess.coverageReason}</span>
+                  </div>
+                </div>
               </div>
 
               <div className="detail-section">

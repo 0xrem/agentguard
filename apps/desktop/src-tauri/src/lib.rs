@@ -146,6 +146,14 @@ struct RuntimeProcessInfo {
     name: String,
     risk: String,
     status: String,
+    #[serde(rename = "coverageStatus")]
+    coverage_status: String,
+    #[serde(rename = "coverageReason")]
+    coverage_reason: String,
+    #[serde(rename = "coverageConfidence")]
+    coverage_confidence: String,
+    #[serde(rename = "lastEventAtUnixMs")]
+    last_event_at_unix_ms: Option<i64>,
     cpu: f32,
     memory: f32,
     network: u64,
@@ -646,13 +654,24 @@ async fn list_runtime_processes(
     let limit = limit.unwrap_or(80).clamp(1, 300);
 
     let mut event_count_by_pid: HashMap<u32, u32> = HashMap::new();
+    let mut last_event_at_by_pid: HashMap<u32, i64> = HashMap::new();
     if let Ok(records) = fetch_recent_audit(&state, 500).await {
         for record in records {
             if let Some(pid) = record.event.agent.process_id {
                 *event_count_by_pid.entry(pid).or_insert(0) += 1;
+                last_event_at_by_pid
+                    .entry(pid)
+                    .and_modify(|existing| {
+                        if record.recorded_at_unix_ms > *existing {
+                            *existing = record.recorded_at_unix_ms;
+                        }
+                    })
+                    .or_insert(record.recorded_at_unix_ms);
             }
         }
     }
+
+    let now_ms = now_unix_ms();
 
     let output = Command::new("ps")
         .args(["-axo", "pid,user,state,pcpu,rss,etime,thcount,comm,args"]) // macOS compatible
@@ -713,16 +732,30 @@ async fn list_runtime_processes(
             .unwrap_or(comm)
             .to_string();
 
+        let events = event_count_by_pid.get(&pid).copied().unwrap_or(0);
+        let last_event_at = last_event_at_by_pid.get(&pid).copied();
+        let (coverage_status, coverage_reason, coverage_confidence) = classify_process_coverage(
+            &name,
+            &command,
+            events,
+            last_event_at,
+            now_ms,
+        );
+
         processes.push(RuntimeProcessInfo {
             pid,
             name,
             risk: classify_process_risk(&command, cpu, rss_kb / 1024.0).into(),
             status: map_ps_state(state),
+            coverage_status,
+            coverage_reason,
+            coverage_confidence,
+            last_event_at_unix_ms: last_event_at,
             cpu,
             memory: rss_kb / 1024.0,
             network: 0,
             network_source: "unknown".into(),
-            events: event_count_by_pid.get(&pid).copied().unwrap_or(0),
+            events,
             uptime,
             command,
             user,
@@ -923,6 +956,77 @@ fn classify_process_risk(command: &str, cpu: f32, memory_mb: f32) -> &'static st
     }
 
     "low"
+}
+
+fn classify_process_coverage(
+    name: &str,
+    command: &str,
+    events: u32,
+    last_event_at_unix_ms: Option<i64>,
+    now_unix_ms: i64,
+) -> (String, String, String) {
+    if events > 0 {
+        let age_text = last_event_at_unix_ms
+            .map(|ts| format_relative_age(now_unix_ms.saturating_sub(ts)))
+            .unwrap_or_else(|| "recently".into());
+        return (
+            "protected".into(),
+            format!(
+                "Observed {events} audited event(s); most recent event {age_text} ago.",
+            ),
+            "high".into(),
+        );
+    }
+
+    if is_likely_agent_process(name, command) {
+        return (
+            "likely_unprotected".into(),
+            "Agent-like process detected but no audited events were linked in the recent window."
+                .into(),
+            "medium".into(),
+        );
+    }
+
+    (
+        "unknown".into(),
+        "No recent audit linkage and process does not strongly match known agent signatures.".into(),
+        "low".into(),
+    )
+}
+
+fn is_likely_agent_process(name: &str, command: &str) -> bool {
+    let text = format!("{} {}", name.to_ascii_lowercase(), command.to_ascii_lowercase());
+    [
+        "claude",
+        "cursor",
+        "aider",
+        "autogpt",
+        "copilot",
+        "codex",
+        "langchain",
+        "llamaindex",
+        "agent",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
+}
+
+fn format_relative_age(delta_ms: i64) -> String {
+    let safe_ms = delta_ms.max(0);
+    let secs = safe_ms / 1000;
+    if secs < 60 {
+        return format!("{}s", secs);
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{}m", mins);
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{}h", hours);
+    }
+    let days = hours / 24;
+    format!("{}d", days)
 }
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {

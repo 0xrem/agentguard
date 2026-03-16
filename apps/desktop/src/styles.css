@@ -2536,6 +2536,13 @@ textarea {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
+.process-coverage-reason {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: #5f6f82;
+  line-height: 1.45;
+}
+
 .process-header {
   display: flex;
   align-items: center;

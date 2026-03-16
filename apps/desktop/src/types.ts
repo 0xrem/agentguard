@@ -110,6 +110,10 @@ export interface RuntimeProcessInfo {
   name: string;
   risk: "high" | "medium" | "low";
   status: "running" | "stopped" | "zombie";
+  coverageStatus: "protected" | "likely_unprotected" | "unknown";
+  coverageReason: string;
+  coverageConfidence: "high" | "medium" | "low";
+  lastEventAtUnixMs: number | null;
   cpu: number;
   memory: number;
   network: number;
