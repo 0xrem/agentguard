@@ -1008,6 +1008,11 @@ textarea {
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .mission-control-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* Template Modal Styles */
@@ -1729,6 +1734,88 @@ textarea {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.mission-control {
+  margin-bottom: 18px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(24, 35, 50, 0.1);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(240, 249, 255, 0.8));
+}
+
+.mission-control-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mission-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.mission-chip.ok {
+  background: rgba(34, 197, 94, 0.14);
+  color: #166534;
+}
+
+.mission-chip.bad {
+  background: rgba(239, 68, 68, 0.14);
+  color: #991b1b;
+}
+
+.mission-chip.warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #92400e;
+}
+
+.mission-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mission-control-tip {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.dashboard-banner {
+  margin-bottom: 10px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  color: #1f2937;
+  font-size: 0.86rem;
+}
+
+.dashboard-banner.error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(254, 242, 242, 0.92);
+}
+
+.dashboard-banner.warn {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(255, 251, 235, 0.92);
+}
+
+.dashboard-banner.ok {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(240, 253, 244, 0.92);
+}
+
+.dashboard-banner.info {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(239, 246, 255, 0.92);
 }
 
 .btn {

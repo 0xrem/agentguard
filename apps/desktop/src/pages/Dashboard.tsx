@@ -104,6 +104,11 @@ export function Dashboard({
 
   const isDaemonRunning = runtimeEnvironment?.daemon_source !== null;
   const isProxyRunning = runtimeEnvironment?.proxy_source !== null;
+  const stackReady = isDaemonRunning && isProxyRunning;
+  const hasFixableSignals =
+    protectionAlerts.length > 0 ||
+    coverageRegressions.length > 0 ||
+    coverageSummary.highRiskUnprotected > 0;
 
   const formatDuration = (ms: number) => {
     const secs = Math.floor(ms / 1000);
@@ -123,23 +128,69 @@ export function Dashboard({
           <h1>{t.dashboard.title}</h1>
           <p>{t.dashboard.subtitle}</p>
         </div>
-        <div className="page-actions">
-          <button 
-            className="btn btn-primary" 
+      </header>
+
+      <section className="mission-control">
+        <div className="mission-control-summary">
+          <span className={`mission-chip ${isDaemonRunning ? 'ok' : 'bad'}`}>
+            Daemon {isDaemonRunning ? 'Ready' : 'Offline'}
+          </span>
+          <span className={`mission-chip ${isProxyRunning ? 'ok' : 'bad'}`}>
+            Proxy {isProxyRunning ? 'Ready' : 'Offline'}
+          </span>
+          <span className={`mission-chip ${hasFixableSignals ? 'warn' : 'ok'}`}>
+            Fix Queue {hasFixableSignals ? 'Pending' : 'Clear'}
+          </span>
+        </div>
+        <div className="mission-control-actions">
+          <button
+            className="btn btn-primary"
             onClick={handleStartLocalStack}
-            disabled={startingStack || isDaemonRunning}
+            disabled={startingStack || stackReady}
           >
-            {startingStack ? t.common.loading : t.dashboard.startStack}
+            {startingStack ? 'Starting...' : '1. Start'}
           </button>
-          <button 
-            className="btn btn-secondary" 
-            onClick={handleRunRealDemo}
-            disabled={runningDemo || !isDaemonRunning}
+          <button
+            className="btn btn-secondary"
+            onClick={onRefresh}
+            disabled={refreshing || !stackReady}
           >
-            {runningDemo ? t.common.loading : t.dashboard.runDemo}
+            {refreshing ? 'Verifying...' : '2. Verify'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={onProtectionQuickFix}
+            disabled={startingStack || !hasFixableSignals}
+          >
+            {startingStack ? 'Fixing...' : '3. Fix'}
           </button>
         </div>
-      </header>
+        <p className="mission-control-tip">
+          先 Start 拉起运行时，再 Verify 获取最新状态，出现告警后用 Fix 自动修复。
+        </p>
+      </section>
+
+      {error ? (
+        <div className="dashboard-banner error">{error}</div>
+      ) : null}
+
+      {runtimeIssues.length > 0 ? (
+        <div className="dashboard-banner warn">
+          <strong>Runtime Issues:</strong> {runtimeIssues.join(' | ')}
+        </div>
+      ) : null}
+
+      {stackResult ? (
+        <div className="dashboard-banner info">
+          <strong>Stack:</strong> {stackResult.message}
+        </div>
+      ) : null}
+
+      {demoResult ? (
+        <div className={`dashboard-banner ${demoResult.exit_code === 0 ? 'ok' : 'warn'}`}>
+          <strong>Demo:</strong> {demoResult.message}
+        </div>
+      ) : null}
 
       {/* 统计卡片 */}
       <div className="stats-grid">
