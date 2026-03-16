@@ -4,6 +4,7 @@ use std::{
     fmt,
     net::SocketAddr,
     sync::{Arc, Mutex, PoisonError},
+    time::{SystemTime, UNIX_EPOCH},
     time::Duration,
 };
 
@@ -108,9 +109,16 @@ pub struct ProxyState {
 pub fn app(state: ProxyState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/responses", post(responses))
         .with_state(state)
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyReadiness {
+    pub rule_count: usize,
+    pub approval_wait_ms: u64,
 }
 
 #[derive(Clone)]
@@ -129,6 +137,21 @@ impl PromptGuardService {
             daemon: Arc::new(Mutex::new(daemon)),
             approval_wait_ms,
         }
+    }
+
+    pub fn readiness_probe(&self) -> Result<ProxyReadiness, ProxyError> {
+        // Probe daemon+store through the same lock path used during request inspection.
+        let rule_count = self
+            .daemon
+            .lock()
+            .map_err(lock_error)?
+            .list_rules()
+            .map_err(ProxyError::Daemon)?
+            .len();
+        Ok(ProxyReadiness {
+            rule_count,
+            approval_wait_ms: self.approval_wait_ms,
+        })
     }
 
     pub async fn inspect_request(
@@ -582,6 +605,48 @@ pub async fn run(config: ProxyConfig) -> Result<(), ProxyError> {
 
 async fn healthz() -> Json<Value> {
     Json(json!({ "status": "ok" }))
+}
+
+async fn readyz(State(state): State<ProxyState>) -> Result<Json<Value>, ProxyError> {
+    let probe = state.guard.readiness_probe()?;
+    let checked_at_unix_ms = now_unix_ms();
+    Ok(Json(json!({
+        "schema_version": "agentguard.readyz.v1",
+        "service": "proxy",
+        "status": "ready",
+        "checked_at_unix_ms": checked_at_unix_ms,
+        "components": [
+            {
+                "name": "upstream",
+                "status": "ok",
+                "details": {
+                    "upstream_base_url": state.upstream_base_url,
+                    "upstream_api_key_configured": state.upstream_api_key.is_some(),
+                }
+            },
+            {
+                "name": "policy",
+                "status": "ok",
+                "details": {
+                    "custom_rule_count": probe.rule_count,
+                }
+            },
+            {
+                "name": "approval",
+                "status": "ok",
+                "details": {
+                    "approval_wait_ms": probe.approval_wait_ms,
+                }
+            }
+        ]
+    })))
+}
+
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 async fn chat_completions(

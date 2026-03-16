@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLanguage } from '../i18n';
+import { loadProcesses, queryAuditLogs } from '../api';
 import type { RuntimeEnvironment, RuntimeStartResult } from '../types';
 
 type ToolTab = 'shell' | 'claude-code' | 'cursor' | 'python' | 'dotenv';
@@ -129,6 +130,13 @@ export function SetupPage({
 }: SetupPageProps) {
   const { t } = useLanguage();
   const [activeTool, setActiveTool] = useState<ToolTab>('shell');
+  const [verifying, setVerifying] = useState(false);
+  const [verification, setVerification] = useState<{
+    checkedAt: number;
+    passed: boolean;
+    summary: string;
+    items: Array<{ name: string; status: 'pass' | 'warn' | 'fail'; detail: string }>;
+  } | null>(null);
 
   const isDaemonRunning = !!runtimeEnvironment?.daemon_source;
   const isProxyRunning = !!runtimeEnvironment?.proxy_source;
@@ -139,6 +147,123 @@ export function SetupPage({
 
   const step1Done = isStackReady;
   const step2Done = step1Done; // just picking a tool, always valid
+
+  async function handleVerifyIntegration() {
+    setVerifying(true);
+    try {
+      const now = Date.now();
+      const items: Array<{ name: string; status: 'pass' | 'warn' | 'fail'; detail: string }> = [];
+
+      if (!isStackReady) {
+        items.push({
+          name: 'Runtime Stack',
+          status: 'fail',
+          detail: 'Daemon/Proxy 未就绪，无法完成接入验收。请先启动本地栈。',
+        });
+      } else {
+        items.push({
+          name: 'Runtime Stack',
+          status: 'pass',
+          detail: 'Daemon + Proxy 均在线。',
+        });
+      }
+
+      const processes = await loadProcesses(120);
+      const agentLike = processes.filter((p) => p.isAgentLike);
+      const protectedAgents = agentLike.filter((p) => p.coverageStatus === 'protected');
+      const highRiskUnprotected = agentLike.filter(
+        (p) => p.risk === 'high' && p.coverageStatus !== 'protected',
+      );
+
+      if (agentLike.length === 0) {
+        items.push({
+          name: 'Agent Process Discovery',
+          status: 'warn',
+          detail: '暂未识别到 Agent 进程，请先启动你的 Agent 工具再验收。',
+        });
+      } else if (protectedAgents.length === 0) {
+        items.push({
+          name: 'Agent Coverage',
+          status: 'fail',
+          detail: `已识别 ${agentLike.length} 个 Agent，但尚无受保护会话。`,
+        });
+      } else {
+        items.push({
+          name: 'Agent Coverage',
+          status: highRiskUnprotected.length > 0 ? 'warn' : 'pass',
+          detail:
+            highRiskUnprotected.length > 0
+              ? `已保护 ${protectedAgents.length}/${agentLike.length}，但有 ${highRiskUnprotected.length} 个高风险 Agent 未保护。`
+              : `已保护 ${protectedAgents.length}/${agentLike.length} 个 Agent 会话。`,
+        });
+      }
+
+      const records = await queryAuditLogs({
+        start_time: now - 10 * 60 * 1000,
+        end_time: now,
+        limit: 60,
+        offset: 0,
+      });
+      const realRecords = records.filter((record) => record.event.metadata?.source !== 'browser_preview');
+      items.push({
+        name: 'Recent Audit Activity (10m)',
+        status: realRecords.length > 0 ? 'pass' : 'warn',
+        detail:
+          realRecords.length > 0
+            ? `检测到 ${realRecords.length} 条真实审计事件（非预览数据）。`
+            : '近 10 分钟暂无真实审计事件，请触发一次 Agent 操作后重试。',
+      });
+
+      const expectedFamily =
+        activeTool === 'claude-code'
+          ? 'claude'
+          : activeTool === 'cursor'
+            ? 'cursor'
+            : activeTool === 'python'
+              ? 'generic'
+              : null;
+
+      if (expectedFamily) {
+        const familyActive = agentLike.some((p) => p.agentFamily === expectedFamily || (expectedFamily === 'generic' && p.agentFamily !== 'unknown'));
+        items.push({
+          name: 'Selected Tool Validation',
+          status: familyActive ? 'pass' : 'warn',
+          detail: familyActive
+            ? `已识别到与当前工具（${activeTool}）相关的 Agent 进程。`
+            : `尚未识别到与当前工具（${activeTool}）相关的活跃进程。`,
+        });
+      }
+
+      const hasFail = items.some((item) => item.status === 'fail');
+      const hasWarn = items.some((item) => item.status === 'warn');
+      setVerification({
+        checkedAt: now,
+        passed: !hasFail,
+        summary: hasFail
+          ? '验收未通过：请先修复失败项。'
+          : hasWarn
+            ? '验收部分通过：建议处理告警项后再上线。'
+            : '验收通过：接入已生效，可进入持续监控。',
+        items,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error';
+      setVerification({
+        checkedAt: Date.now(),
+        passed: false,
+        summary: '验收执行失败',
+        items: [
+          {
+            name: 'Verification Runner',
+            status: 'fail',
+            detail: `无法完成自动验收：${message}`,
+          },
+        ],
+      });
+    } finally {
+      setVerifying(false);
+    }
+  }
 
   return (
     <div className="setup-page">
@@ -248,6 +373,49 @@ export function SetupPage({
           </div>
         </div>
       )}
+
+      {/* 步骤 4: 一键验收 */}
+      <div className={`setup-step ${!step1Done ? 'setup-step-disabled' : 'setup-step-active'}`}>
+        <div className="setup-step-header">
+          <div className={`setup-step-badge ${verification?.passed ? 'done' : !step1Done ? 'disabled' : 'active'}`}>
+            {verification?.passed ? '✓' : '4'}
+          </div>
+          <div>
+            <h2 className="setup-step-title">一键验收接入是否生效</h2>
+            <p className="setup-step-desc">自动检测覆盖状态、审计活跃度和当前工具命中情况，给出通过/告警/失败结论。</p>
+          </div>
+        </div>
+
+        {step1Done ? (
+          <>
+            <button className="btn btn-primary" onClick={handleVerifyIntegration} disabled={verifying}>
+              {verifying ? '正在验收...' : '开始验收'}
+            </button>
+
+            {verification && (
+              <div className={`setup-verification ${verification.passed ? 'pass' : 'warn'}`}>
+                <div className="setup-verification-header">
+                  <strong>{verification.summary}</strong>
+                  <span>{new Date(verification.checkedAt).toLocaleTimeString()}</span>
+                </div>
+                <div className="setup-verification-list">
+                  {verification.items.map((item, index) => (
+                    <div key={`${item.name}-${index}`} className={`setup-verification-item ${item.status}`}>
+                      <div className="setup-verification-item-title">
+                        <span>{item.status === 'pass' ? '✅' : item.status === 'warn' ? '⚠️' : '⛔'}</span>
+                        <span>{item.name}</span>
+                      </div>
+                      <div className="setup-verification-item-detail">{item.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="setup-step-placeholder">请先完成步骤 1（启动本地栈）后再验收。</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1124,30 +1124,66 @@ fn format_relative_age(delta_ms: i64) -> String {
 
 async fn fetch_daemon_status(state: &DesktopState) -> DaemonStatus {
     let checked_at_unix_ms = now_unix_ms();
-    let url = format!("{}/healthz", state.daemon_url);
-
-    match state.client.get(url).send().await {
-        Ok(response) if response.status().is_success() => DaemonStatus {
+    match runtime_ready_probe(&state.client, &state.daemon_url).await {
+        Ok(_) => DaemonStatus {
             daemon_url: state.daemon_url.clone(),
             healthy: true,
             checked_at_unix_ms,
             message: "Desktop app can reach the daemon and the runtime control plane is live."
                 .into(),
         },
-        Ok(response) => DaemonStatus {
+        Err(message) => DaemonStatus {
             daemon_url: state.daemon_url.clone(),
             healthy: false,
             checked_at_unix_ms,
-            message: format!("Daemon responded with {}", response.status()),
+            message,
         },
-        Err(error) => DaemonStatus {
-            daemon_url: state.daemon_url.clone(),
-            healthy: false,
-            checked_at_unix_ms,
-            message: format!(
-                "Desktop cannot reach the daemon yet. Start the local stack from the control room to bring the runtime online. Error: {error}"
-            ),
-        },
+    }
+}
+
+async fn runtime_ready_probe(client: &Client, base_url: &str) -> Result<(), String> {
+    let readyz_url = format!("{base_url}/readyz");
+    match client.get(readyz_url).send().await {
+        Ok(response) if response.status().is_success() => return Ok(()),
+        Ok(response) => {
+            let status = response.status();
+            let healthz_url = format!("{base_url}/healthz");
+            match client.get(healthz_url).send().await {
+                Ok(fallback) if fallback.status().is_success() => return Ok(()),
+                Ok(fallback) => {
+                    return Err(format!(
+                        "runtime probe failed: readyz={}, healthz={}",
+                        status,
+                        fallback.status()
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "runtime probe failed: readyz={}, healthz request error: {}",
+                        status, error
+                    ));
+                }
+            }
+        }
+        Err(error) => {
+            let healthz_url = format!("{base_url}/healthz");
+            match client.get(healthz_url).send().await {
+                Ok(fallback) if fallback.status().is_success() => return Ok(()),
+                Ok(fallback) => {
+                    return Err(format!(
+                        "Desktop cannot reach runtime readiness endpoint and health endpoint returned {}. readyz error: {}",
+                        fallback.status(),
+                        error
+                    ));
+                }
+                Err(fallback_error) => {
+                    return Err(format!(
+                        "Desktop cannot reach runtime endpoints. readyz error: {}; healthz error: {}",
+                        error, fallback_error
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -1681,12 +1717,7 @@ async fn proxy_is_healthy(state: &DesktopState) -> bool {
 }
 
 async fn healthz_is_success(client: &Client, base_url: &str) -> bool {
-    client
-        .get(format!("{base_url}/healthz"))
-        .send()
-        .await
-        .map(|response| response.status().is_success())
-        .unwrap_or(false)
+    runtime_ready_probe(client, base_url).await.is_ok()
 }
 
 fn bind_addr_from_url(url: &str) -> Result<String, String> {

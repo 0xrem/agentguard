@@ -3311,3 +3311,72 @@ textarea {
   opacity: 0.85;
   line-height: 1.5;
 }
+
+.setup-verification {
+  margin-top: 16px;
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.setup-verification.pass {
+  border-color: rgba(9, 120, 103, 0.35);
+}
+
+.setup-verification.warn {
+  border-color: rgba(228, 141, 49, 0.35);
+}
+
+.setup-verification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: #1f2d3d;
+}
+
+.setup-verification-header span {
+  color: #7b8794;
+  font-size: 12px;
+}
+
+.setup-verification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-verification-item {
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.setup-verification-item.pass {
+  border-color: rgba(9, 120, 103, 0.35);
+}
+
+.setup-verification-item.warn {
+  border-color: rgba(228, 141, 49, 0.35);
+}
+
+.setup-verification-item.fail {
+  border-color: rgba(191, 56, 55, 0.35);
+}
+
+.setup-verification-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1f2d3d;
+  font-weight: 600;
+}
+
+.setup-verification-item-detail {
+  margin-top: 6px;
+  color: #506175;
+  font-size: 13px;
+  line-height: 1.4;
+}

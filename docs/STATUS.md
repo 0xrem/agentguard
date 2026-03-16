@@ -50,7 +50,9 @@ These capabilities exist but are not yet production-strong:
 - real demo reliability:
   - core flow works
   - desktop now includes auto-start + retry + clearer runtime failure hints
-  - still needs more deterministic readiness probes and cross-machine soak validation
+  - daemon/proxy now expose standardized `/readyz` schema (`agentguard.readyz.v1`)
+  - desktop/scripts prefer readyz with healthz fallback
+  - still needs cross-machine soak validation
 
 ## What Is Not Implemented Yet
 
@@ -66,6 +68,7 @@ These capabilities exist but are not yet production-strong:
 Use these commands to confirm real behavior:
 
 ```bash
+pnpm stack:doctor
 pnpm stack:up
 pnpm desktop:dev
 pnpm verify:reality
@@ -77,7 +80,7 @@ See docs/REALITY_CHECKLIST.md for the manual verification checklist.
 
 1. Coverage proof:
    show which active agent processes are actually protected
-2. Demo reliability soak and readiness hardening:
+2. Demo reliability soak:
   reduce residual timeout variance across environments
 3. More direct framework coverage:
    Claude Code and Cursor first

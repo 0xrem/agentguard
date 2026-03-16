@@ -5,15 +5,19 @@ This checklist is used to verify desktop behavior is backed by real daemon/proxy
 ## Quick Run
 
 ```bash
+pnpm stack:doctor
 pnpm verify:reality
 ```
+
+Use `pnpm stack:doctor` first when troubleshooting startup/readiness issues. It reports port occupancy, process ownership, readiness probe payloads, and recent failure reasons from runtime logs.
 
 What this does:
 
 1. Ensures local daemon and proxy are up.
-2. Runs live demo to trigger real runtime activity.
-3. Pulls daemon audit records from `/v1/audit`.
-4. Verifies recent records are real events and not `browser_preview` mock source.
+2. Confirms runtime readiness probes (`/readyz`, fallback `/healthz`) are reachable.
+3. Runs live demo to trigger real runtime activity.
+4. Pulls daemon audit records from `/v1/audit`.
+5. Verifies recent records are real events and not `browser_preview` mock source.
 
 ## Manual Spot Checks
 

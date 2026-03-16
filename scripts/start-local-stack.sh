@@ -32,19 +32,52 @@ import sys
 import time
 import urllib.request
 
-url = sys.argv[1].rstrip("/") + "/healthz"
+base = sys.argv[1].rstrip("/")
+probe_urls = [base + "/readyz", base + "/healthz"]
 deadline = time.time() + float(sys.argv[2])
 
 while time.time() < deadline:
+  for url in probe_urls:
     try:
-        with urllib.request.urlopen(url, timeout=1.5) as response:
-            if 200 <= response.status < 300:
-                raise SystemExit(0)
+      with urllib.request.urlopen(url, timeout=1.5) as response:
+        if 200 <= response.status < 300:
+          raise SystemExit(0)
     except Exception:
-        time.sleep(0.2)
+      pass
+  time.sleep(0.2)
 
 raise SystemExit(1)
 PY
+}
+
+port_from_url() {
+  python3 - "$1" <<'PY'
+from urllib.parse import urlparse
+import sys
+
+parsed = urlparse(sys.argv[1])
+if not parsed.port:
+    raise SystemExit(f"invalid URL (missing port): {sys.argv[1]}")
+print(parsed.port)
+PY
+}
+
+find_listener_pid() {
+  local health_url="$1"
+  local label="$2"
+  local port
+  port="$(port_from_url "$health_url")"
+
+  local pid
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    if ps -p "$pid" -o command= 2>/dev/null | grep -q "$label"; then
+      echo "$pid"
+      return 0
+    fi
+  done < <(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+
+  return 1
 }
 
 health_is_up() {
@@ -60,6 +93,14 @@ start_service() {
   shift 5
 
   if health_is_up "$health_url"; then
+    if [[ ! -f "$pid_file" ]]; then
+      local discovered_pid
+      if discovered_pid="$(find_listener_pid "$health_url" "$label")"; then
+        echo "$discovered_pid" > "$pid_file"
+        echo "==> ${label} already healthy at $health_url (discovered pid ${discovered_pid})"
+        return 0
+      fi
+    fi
     echo "==> ${label} already healthy at $health_url"
     return 0
   fi
@@ -72,6 +113,13 @@ start_service() {
       if wait_for_health "$health_url" 5; then
         return 0
       fi
+      echo "==> ${label} pid ${stale_pid} is unhealthy, terminating before restart"
+      kill "$stale_pid" >/dev/null 2>&1 || true
+      sleep 0.2
+      if kill -0 "$stale_pid" >/dev/null 2>&1; then
+        kill -9 "$stale_pid" >/dev/null 2>&1 || true
+      fi
+      rm -f "$pid_file"
     else
       rm -f "$pid_file"
     fi

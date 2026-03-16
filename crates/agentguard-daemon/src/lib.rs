@@ -3,6 +3,7 @@ use std::{
     fmt,
     net::SocketAddr,
     sync::{Arc, Mutex, PoisonError},
+    time::{SystemTime, UNIX_EPOCH},
     time::Duration,
 };
 
@@ -58,6 +59,13 @@ impl From<StoreError> for DaemonError {
 
 pub type Result<T> = std::result::Result<T, DaemonError>;
 
+#[derive(Debug, Clone)]
+pub struct DaemonReadiness {
+    pub custom_rule_count: usize,
+    pub default_rule_count: usize,
+    pub recent_audit_probe_count: usize,
+}
+
 pub struct AgentGuardDaemon {
     default_rules: Vec<Rule>,
     store: AuditStore,
@@ -77,6 +85,17 @@ impl AgentGuardDaemon {
 
     pub fn rule_count(&self) -> usize {
         self.default_rules.len()
+    }
+
+    pub fn readiness_probe(&self) -> Result<DaemonReadiness> {
+        // Probe store read-paths so ready means more than "process is alive".
+        let custom_rule_count = self.store.list_rules()?.len();
+        let recent_audit_probe_count = self.store.recent_audit_records(1)?.len();
+        Ok(DaemonReadiness {
+            custom_rule_count,
+            default_rule_count: self.default_rules.len(),
+            recent_audit_probe_count,
+        })
     }
 
     pub fn process_event(&self, event: Event) -> Result<AuditRecord> {
@@ -419,6 +438,7 @@ struct UpsertAuditReviewRequest {
 pub fn app(daemon: AgentGuardDaemon) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
         .route("/v1/events", post(create_event))
         .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
@@ -457,6 +477,53 @@ pub async fn run(config: DaemonConfig) -> std::result::Result<(), DaemonApiError
 
 async fn healthz() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
+}
+
+async fn readyz(
+    State(state): State<ApiState>,
+) -> std::result::Result<Json<serde_json::Value>, DaemonApiError> {
+    let daemon = state.daemon.lock().map_err(lock_error)?;
+    let probe = daemon.readiness_probe()?;
+    let checked_at_unix_ms = now_unix_ms();
+
+    Ok(Json(json!({
+        "schema_version": "agentguard.readyz.v1",
+        "service": "daemon",
+        "status": "ready",
+        "checked_at_unix_ms": checked_at_unix_ms,
+        "components": [
+            {
+                "name": "store",
+                "status": "ok",
+                "details": {
+                    "db_reachable": true,
+                }
+            },
+            {
+                "name": "policy",
+                "status": "ok",
+                "details": {
+                    "custom_rule_count": probe.custom_rule_count,
+                    "default_rule_count": probe.default_rule_count,
+                    "total_rule_count": probe.custom_rule_count + probe.default_rule_count,
+                }
+            },
+            {
+                "name": "audit",
+                "status": "ok",
+                "details": {
+                    "recent_probe_count": probe.recent_audit_probe_count,
+                }
+            }
+        ]
+    })))
+}
+
+fn now_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 async fn create_event(

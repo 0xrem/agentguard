@@ -4,11 +4,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DAEMON_URL="${AGENTGUARD_DAEMON_URL:-http://127.0.0.1:8790}"
+PROXY_URL="${AGENTGUARD_PROXY_URL:-http://127.0.0.1:8787}"
 
 cd "$ROOT_DIR"
 
 echo "==> [1/4] Ensure local stack is up"
 "$ROOT_DIR/scripts/start-local-stack.sh" >/dev/null
+
+echo "==>      Validate runtime readiness probes"
+curl -fsS "$DAEMON_URL/readyz" >/dev/null 2>&1 || curl -fsS "$DAEMON_URL/healthz" >/dev/null 2>&1
+curl -fsS "$PROXY_URL/readyz" >/dev/null 2>&1 || curl -fsS "$PROXY_URL/healthz" >/dev/null 2>&1
 
 echo "==> [2/4] Run live demo to generate real runtime events"
 START_MS="$(python3 - <<'PY'
