@@ -14,7 +14,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'audit', label: 'Audit Logs', labelZh: '审计日志', icon: '📜' },
   { id: 'processes', label: 'Processes', labelZh: '进程监控', icon: '⚙️' },
   { id: 'rules', label: 'Rules', labelZh: '规则管理', icon: '📋' },
-  { id: 'settings', label: 'Settings', labelZh: '设置', icon: '⚙️' },
+  { id: 'settings', label: 'Settings', labelZh: '设置', icon: '🧰' },
 ];
 
 // i18n 翻译类型
