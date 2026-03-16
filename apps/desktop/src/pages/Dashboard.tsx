@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '../i18n';
 import type { AuditStats, DashboardSnapshot, RuntimeEnvironment, RuntimeProcessInfo, SampleEventKind, AuditRecord } from '../types';
 
@@ -26,6 +26,7 @@ interface DashboardProps {
   submitting: boolean;
   lastRecord: AuditRecord | null;
   runtimeEnvironment: RuntimeEnvironment | null;
+  processes: RuntimeProcessInfo[];
   runtimeIssues: string[];
   protectionAlerts: ProtectionAlert[];
   coverageRegressions: Array<{ process: RuntimeProcessInfo; startedAt: number; durationMs: number; severity: 'critical' | 'warning' }>;
@@ -44,6 +45,7 @@ interface DashboardProps {
   onOpenSetup: () => void;
   onOpenProcesses: () => void;
   onStartLocalStack: () => void;
+  onQuickResolveApproval: (approvalId: number, action: 'allow' | 'block') => void;
   startingStack: boolean;
   stackResult: { mode: string; command: string; exit_code: number | null; stdout: string; stderr: string; message: string } | null;
   onRunRealDemo: (mode: 'python_sdk' | 'openai_proxy') => void;
@@ -65,6 +67,7 @@ export function Dashboard({
   submitting,
   lastRecord,
   runtimeEnvironment,
+  processes,
   runtimeIssues,
   protectionAlerts,
   coverageRegressions,
@@ -77,6 +80,7 @@ export function Dashboard({
   onOpenSetup,
   onOpenProcesses,
   onStartLocalStack,
+  onQuickResolveApproval,
   startingStack,
   stackResult,
   onRunRealDemo,
@@ -91,10 +95,7 @@ export function Dashboard({
   const [showRecoveredSessions, setShowRecoveredSessions] = useState(false);
   
   const totalEvents = snapshot?.records.length ?? 0;
-  const blockedCount = snapshot?.counts.block ?? 0;
-  const allowedCount = snapshot?.counts.allow ?? 0;
-  const pendingApprovals = snapshot?.pending_approvals.length ?? 0;
-  const activeRules = snapshot?.remembered_rules.length ?? 0;
+  const pendingApprovals = snapshot?.pending_approvals ?? [];
 
   const handleStartLocalStack = async () => {
     await onStartLocalStack();
@@ -112,6 +113,48 @@ export function Dashboard({
     coverageRegressions.length > 0 ||
     coverageSummary.highRiskUnprotected > 0;
 
+  const agents = useMemo(
+    () => processes
+      .filter((process) => process.isAgentLike)
+      .sort((left, right) => {
+        const riskWeight = (risk: RuntimeProcessInfo['risk']) => (risk === 'high' ? 3 : risk === 'medium' ? 2 : 1);
+        const byRisk = riskWeight(right.risk) - riskWeight(left.risk);
+        if (byRisk !== 0) return byRisk;
+        if (right.events !== left.events) return right.events - left.events;
+        return right.cpu - left.cpu;
+      }),
+    [processes],
+  );
+
+  const [selectedAgentName, setSelectedAgentName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (agents.length === 0) {
+      setSelectedAgentName(null);
+      return;
+    }
+    if (!selectedAgentName || !agents.some((agent) => agent.name === selectedAgentName)) {
+      setSelectedAgentName(agents[0].name);
+    }
+  }, [agents, selectedAgentName]);
+
+  const selectedAgent = useMemo(
+    () => agents.find((agent) => agent.name === selectedAgentName) ?? null,
+    [agents, selectedAgentName],
+  );
+
+  const selectedAgentEvents = useMemo(() => {
+    if (!selectedAgentName) return [];
+    return (snapshot?.records ?? [])
+      .filter((record) => record.event.agent.name === selectedAgentName)
+      .slice(0, 20);
+  }, [selectedAgentName, snapshot]);
+
+  const selectedAgentAnomalies = useMemo(
+    () => selectedAgentEvents.filter((record) => ['ask', 'warn', 'block', 'kill'].includes(record.decision.action)),
+    [selectedAgentEvents],
+  );
+
   const formatDuration = (ms: number) => {
     const secs = Math.floor(ms / 1000);
     if (secs < 60) return `${secs}s`;
@@ -124,11 +167,11 @@ export function Dashboard({
   };
 
   return (
-    <div className="dashboard-page">
+    <div className="dashboard-page dashboard-controlroom">
       <header className="page-header">
         <div className="page-title">
-          <h1>{t.dashboard.title}</h1>
-          <p>{t.dashboard.subtitle}</p>
+          <h1>Agent Runtime Control Room</h1>
+          <p>桌面控制台：实时看到系统 Agent、每一步行为、异常与审批。</p>
         </div>
       </header>
 
@@ -206,153 +249,82 @@ export function Dashboard({
         </div>
       ) : null}
 
-      {/* 统计卡片 */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon">📊</div>
-          <div className="stat-content">
-            <div className="stat-value">{totalEvents.toLocaleString()}</div>
-            <div className="stat-label">{t.dashboard.totalEvents}</div>
-          </div>
+      <div className="desktop-metrics-row">
+        <div className="desktop-metric-card">
+          <span>Running Agents</span>
+          <strong>{agents.length}</strong>
         </div>
-
-        <div className="stat-card blocked">
-          <div className="stat-icon">🚫</div>
-          <div className="stat-content">
-            <div className="stat-value">{blockedCount.toLocaleString()}</div>
-            <div className="stat-label">{t.dashboard.blockedEvents}</div>
-          </div>
+        <div className="desktop-metric-card">
+          <span>Live Events</span>
+          <strong>{totalEvents}</strong>
         </div>
-
-        <div className="stat-card allowed">
-          <div className="stat-icon">✅</div>
-          <div className="stat-content">
-            <div className="stat-value">{allowedCount.toLocaleString()}</div>
-            <div className="stat-label">{t.dashboard.allowedEvents}</div>
-          </div>
+        <div className="desktop-metric-card warn">
+          <span>Anomalies</span>
+          <strong>{selectedAgentAnomalies.length}</strong>
         </div>
-
-        <div className="stat-card pending">
-          <div className="stat-icon">⏳</div>
-          <div className="stat-content">
-            <div className="stat-value">{pendingApprovals}</div>
-            <div className="stat-label">{t.dashboard.pendingApprovals}</div>
-          </div>
-        </div>
-
-        <div className="stat-card rules">
-          <div className="stat-icon">📋</div>
-          <div className="stat-content">
-            <div className="stat-value">{activeRules}</div>
-            <div className="stat-label">{t.dashboard.activeRules}</div>
-          </div>
+        <div className="desktop-metric-card danger">
+          <span>Pending Approvals</span>
+          <strong>{pendingApprovals.length}</strong>
         </div>
       </div>
 
-      {/* 24h 统计面板 */}
-      {auditStats && auditStats.total > 0 && (
-        <div className="section">
-          <h2>过去 24 小时活动概览</h2>
-          <div className="stats-grid stats-grid-sm">
-            <div className="stat-card">
-              <div className="stat-icon">📊</div>
-              <div className="stat-content">
-                <div className="stat-value">{auditStats.total}</div>
-                <div className="stat-label">总事件</div>
-              </div>
-            </div>
-            <div className="stat-card blocked">
-              <div className="stat-icon">🚫</div>
-              <div className="stat-content">
-                <div className="stat-value">{auditStats.by_action['block'] ?? 0}</div>
-                <div className="stat-label">已拦截</div>
-              </div>
-            </div>
-            <div className="stat-card pending">
-              <div className="stat-icon">⏳</div>
-              <div className="stat-content">
-                <div className="stat-value">{auditStats.by_action['ask'] ?? 0}</div>
-                <div className="stat-label">待审批</div>
-              </div>
-            </div>
-            <div className="stat-card allowed">
-              <div className="stat-icon">✅</div>
-              <div className="stat-content">
-                <div className="stat-value">{auditStats.by_action['allow'] ?? 0}</div>
-                <div className="stat-label">已放行</div>
-              </div>
-            </div>
+      <div className="desktop-main-grid">
+        <section className="desktop-panel">
+          <div className="section-title-row">
+            <h2>System Agents</h2>
+            <button className="btn btn-text btn-sm" onClick={onOpenProcesses}>Full Process View</button>
           </div>
-          {auditStats.top_agents.length > 0 && (
-            <div className="top-agents-row">
-              <span className="top-agents-label">活跃 Agent：</span>
-              {auditStats.top_agents.slice(0, 5).map(([name, count]) => (
-                <span key={name} className="agent-pill">
-                  {name} <span className="agent-pill-count">{count}</span>
-                </span>
+          {agents.length === 0 ? (
+            <div className="empty-state">当前没有检测到 Agent 进程。先点击 Start 或去 Setup 接入。</div>
+          ) : (
+            <div className="agent-list">
+              {agents.map((agent) => (
+                <button
+                  key={`${agent.pid}-${agent.name}`}
+                  className={`agent-list-item ${selectedAgentName === agent.name ? 'active' : ''}`}
+                  onClick={() => setSelectedAgentName(agent.name)}
+                >
+                  <div className="agent-list-main">
+                    <strong>{agent.name}</strong>
+                    <span>PID {agent.pid} · {agent.agentFamily}</span>
+                  </div>
+                  <div className="agent-list-meta">
+                    <span className={`risk-chip ${agent.risk}`}>{agent.risk.toUpperCase()}</span>
+                    <span>{agent.coverageStatus}</span>
+                  </div>
+                </button>
               ))}
             </div>
           )}
-          <div className="risk-breakdown-row">
-            {Object.entries(auditStats.by_risk).map(([risk, count]) => (
-              <span key={risk} className={`risk-badge risk-${risk}`}>
-                {risk}: {count}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+        </section>
 
-      {/* 运行状态 */}
-      <div className="section">
-        <h2>{t.dashboard.runtimeStatus}</h2>
-        <div className="runtime-status">
-          <div className={`status-indicator ${isDaemonRunning ? 'online' : 'offline'}`}>
-            <div className="status-dot"></div>
-            <div className="status-info">
-              <div className="status-label">Daemon</div>
-              <div className="status-text">
-                {isDaemonRunning ? t.dashboard.daemonRunning : t.dashboard.daemonStopped}
-              </div>
+        <section className="desktop-panel">
+          <div className="section-title-row">
+            <h2>Live Step Timeline</h2>
+            {selectedAgent ? <span className="agent-selected">{selectedAgent.name}</span> : null}
+          </div>
+          {!selectedAgent ? (
+            <div className="empty-state">请先选择一个 Agent。</div>
+          ) : selectedAgentEvents.length === 0 ? (
+            <div className="empty-state">该 Agent 暂无行为记录。先触发一次操作再观察。</div>
+          ) : (
+            <div className="timeline-feed">
+              {selectedAgentEvents.map((record) => (
+                <div key={record.id} className="timeline-event">
+                  <div className="timeline-head">
+                    <span className={`action-badge ${record.decision.action}`}>{record.decision.action.toUpperCase()}</span>
+                    <span className="timeline-time">{new Date(record.recorded_at_unix_ms).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="timeline-operation">{record.event.operation}</div>
+                  <div className="timeline-target">
+                    {record.event.target.kind}: {record.event.target.kind === 'none' ? '(none)' : record.event.target.value}
+                  </div>
+                  <div className="timeline-reason">{record.decision.reason}</div>
+                </div>
+              ))}
             </div>
-          </div>
-
-          <div className={`status-indicator ${isProxyRunning ? 'online' : 'offline'}`}>
-            <div className="status-dot"></div>
-            <div className="status-info">
-              <div className="status-label">Proxy</div>
-              <div className="status-text">
-                {isProxyRunning ? t.dashboard.proxyRunning : t.dashboard.proxyStopped}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <h2>Agent 覆盖总览</h2>
-        <div className="coverage-summary-grid">
-          <div className="coverage-summary-card">
-            <span>总 Agent</span>
-            <strong>{coverageSummary.total}</strong>
-          </div>
-          <div className="coverage-summary-card success">
-            <span>已保护</span>
-            <strong>{coverageSummary.protectedCount}</strong>
-          </div>
-          <div className="coverage-summary-card warning">
-            <span>疑似未保护</span>
-            <strong>{coverageSummary.likelyUnprotectedCount}</strong>
-          </div>
-          <div className="coverage-summary-card muted">
-            <span>未知</span>
-            <strong>{coverageSummary.unknownCount}</strong>
-          </div>
-          <div className="coverage-summary-card danger">
-            <span>高风险未保护</span>
-            <strong>{coverageSummary.highRiskUnprotected}</strong>
-          </div>
-        </div>
+          )}
+        </section>
       </div>
 
       {coverageRegressions.length > 0 && (
@@ -424,7 +396,10 @@ export function Dashboard({
       )}
 
       <div className="section">
-        <h2>{t.dashboard.protectionAlerts}</h2>
+        <div className="section-title-row">
+          <h2>Anomaly Interception & Approval</h2>
+          <button className="btn btn-secondary btn-sm" onClick={onOpenSetup}>Approval Setup</button>
+        </div>
         {lastProtectionFix ? (
           <div className={`protection-fix-result ${lastProtectionFix.status}`}>
             <strong>{t.dashboard.lastFixStatus}</strong>
@@ -442,6 +417,30 @@ export function Dashboard({
                 </button>
               </div>
             ) : null}
+
+            {pendingApprovals.length > 0 ? (
+              <div className="pending-approval-grid">
+                {pendingApprovals.slice(0, 4).map((approval) => (
+                  <div key={approval.id} className="pending-approval-card">
+                    <div className="pending-approval-title">
+                      #{approval.id} · {approval.audit_record.event.agent.name}
+                    </div>
+                    <div className="pending-approval-detail">
+                      {approval.audit_record.event.operation} · {approval.audit_record.event.target.kind === 'none' ? '(none)' : approval.audit_record.event.target.value}
+                    </div>
+                    <div className="pending-approval-actions">
+                      <button className="btn btn-primary btn-sm" onClick={() => onQuickResolveApproval(approval.id, 'allow')}>
+                        批准
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={() => onQuickResolveApproval(approval.id, 'block')}>
+                        拒绝
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             {protectionAlerts.map((alert) => (
               <div
                 key={alert.id}
@@ -455,9 +454,6 @@ export function Dashboard({
                   ))}
                 </div>
                 <div className="protection-alert-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={onOpenSetup}>
-                    {t.dashboard.openSetup}
-                  </button>
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={onProtectionQuickFix}
@@ -475,40 +471,6 @@ export function Dashboard({
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* 最近活动 */}
-      <div className="section">
-        <div className="section-title-row">
-          <h2>{t.dashboard.recentActivity}</h2>
-          <button className="btn btn-text btn-sm" onClick={() => setShowRecentActivity((v) => !v)}>
-            {showRecentActivity ? '收起' : '展开'}
-          </button>
-        </div>
-        {showRecentActivity ? (
-          <div className="activity-list">
-            {snapshot?.records && snapshot.records.length > 0 ? (
-              snapshot.records.slice(0, 5).map((record, index) => (
-                <div key={index} className="activity-item">
-                  <div className="activity-icon">
-                    {record.decision.action === 'block' ? '🚫' : record.decision.action === 'allow' ? '✅' : '⏳'}
-                  </div>
-                  <div className="activity-content">
-                    <div className="activity-title">{record.event.agent.name}</div>
-                    <div className="activity-subtitle">{record.event.operation}</div>
-                  </div>
-                  <div className="activity-time">
-                    {new Date(record.recorded_at_unix_ms).toLocaleTimeString()}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="empty-state">{t.dashboard.noRecentActivity}</div>
-            )}
-          </div>
-        ) : (
-          <div className="empty-state">已隐藏活动明细，点击展开查看。</div>
         )}
       </div>
     </div>

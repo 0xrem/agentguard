@@ -1013,6 +1013,14 @@ textarea {
     width: 100%;
     justify-content: center;
   }
+
+  .desktop-metrics-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .desktop-main-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Template Modal Styles */
@@ -1816,6 +1824,218 @@ textarea {
 .dashboard-banner.info {
   border-color: rgba(59, 130, 246, 0.3);
   background: rgba(239, 246, 255, 0.92);
+}
+
+.dashboard-controlroom {
+  max-width: none;
+  padding: 20px 26px 28px;
+}
+
+.desktop-metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.desktop-metric-card {
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.desktop-metric-card span {
+  font-size: 0.76rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.desktop-metric-card strong {
+  color: #0f172a;
+  font-size: 1.4rem;
+}
+
+.desktop-metric-card.warn {
+  background: rgba(254, 243, 199, 0.7);
+}
+
+.desktop-metric-card.danger {
+  background: rgba(254, 226, 226, 0.8);
+}
+
+.desktop-main-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.6fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.desktop-panel {
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 12px;
+}
+
+.agent-list {
+  display: grid;
+  gap: 8px;
+  max-height: 440px;
+  overflow: auto;
+}
+
+.agent-list-item {
+  width: 100%;
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+
+.agent-list-item.active {
+  border-color: rgba(15, 118, 110, 0.55);
+  background: rgba(236, 253, 245, 0.85);
+}
+
+.agent-list-main {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-list-main strong {
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+
+.agent-list-main span {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.agent-list-meta {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  color: #475569;
+  font-size: 0.75rem;
+}
+
+.agent-selected {
+  font-size: 0.82rem;
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.timeline-feed {
+  display: grid;
+  gap: 8px;
+  max-height: 440px;
+  overflow: auto;
+}
+
+.timeline-event {
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(248, 250, 252, 0.8);
+}
+
+.timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.action-badge {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.action-badge.allow {
+  background: rgba(34, 197, 94, 0.16);
+  color: #166534;
+}
+
+.action-badge.warn,
+.action-badge.ask {
+  background: rgba(245, 158, 11, 0.2);
+  color: #92400e;
+}
+
+.action-badge.block,
+.action-badge.kill {
+  background: rgba(239, 68, 68, 0.2);
+  color: #991b1b;
+}
+
+.timeline-time {
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.timeline-operation {
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 4px;
+  font-size: 0.86rem;
+}
+
+.timeline-target {
+  color: #334155;
+  font-size: 0.8rem;
+  margin-bottom: 5px;
+  word-break: break-word;
+}
+
+.timeline-reason {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.pending-approval-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pending-approval-card {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 251, 235, 0.85);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.pending-approval-title {
+  font-weight: 700;
+  color: #7c2d12;
+  font-size: 0.84rem;
+}
+
+.pending-approval-detail {
+  color: #475569;
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+
+.pending-approval-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .btn {

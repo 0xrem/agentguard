@@ -589,6 +589,15 @@ export default function App() {
     }
   }
 
+  async function handleQuickResolveApproval(approvalId: number, action: "allow" | "block") {
+    try {
+      await resolveApprovalRequest(approvalId, action, "Resolved from desktop control room");
+      await refreshDashboard(false);
+    } catch (resolveError) {
+      setError(getErrorMessage(resolveError));
+    }
+  }
+
   async function handleDismissApproval() {
     const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
     if (!activeApproval) {
@@ -1163,6 +1172,7 @@ export default function App() {
           submitting={submitting}
           lastRecord={lastRecord}
           runtimeEnvironment={runtimeEnvironment}
+          processes={processes}
           runtimeIssues={runtimeIssues}
           protectionAlerts={protectionAlerts}
           coverageRegressions={coverageRegressions}
@@ -1175,6 +1185,7 @@ export default function App() {
           onOpenSetup={() => setCurrentPage('setup')}
           onOpenProcesses={() => setCurrentPage('processes')}
           onStartLocalStack={handleStartLocalStack}
+          onQuickResolveApproval={(approvalId, action) => void handleQuickResolveApproval(approvalId, action)}
           startingStack={startingStack}
           stackResult={stackResult ? {
             mode: stackResult.daemon_pid ? 'bundled' : 'workspace',
