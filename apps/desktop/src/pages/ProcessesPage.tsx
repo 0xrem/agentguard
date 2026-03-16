@@ -6,17 +6,73 @@ interface ProcessesPageProps {
   loading: boolean;
   processes: RuntimeProcessInfo[];
   onRefresh: () => void;
+  onOpenSetup: () => void;
 }
 
-export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPageProps) {
+export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: ProcessesPageProps) {
   const { t } = useLanguage();
   const [selectedProcess, setSelectedProcess] = useState<RuntimeProcessInfo | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [showOnlyAgents, setShowOnlyAgents] = useState(true);
+  const [searchText, setSearchText] = useState('');
+  const [riskFilter, setRiskFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
 
-  const sortedProcesses = useMemo(
-    () => [...processes].sort((a, b) => b.events - a.events || b.cpu - a.cpu || b.memory - a.memory),
+  const AGENT_PATTERNS = [/claude/i, /cursor/i, /aider/i, /autogpt/i, /copilot/i, /codex/i, /agent/i, /langchain/i, /llamaindex/i];
+
+  const isLikelyAgent = (process: RuntimeProcessInfo) => {
+    const text = `${process.name} ${process.command}`;
+    return AGENT_PATTERNS.some((pattern) => pattern.test(text));
+  };
+
+  const isProtected = (process: RuntimeProcessInfo) => process.events > 0;
+  const riskWeight = (risk: RuntimeProcessInfo['risk']) => (risk === 'high' ? 3 : risk === 'medium' ? 2 : 1);
+
+  const likelyAgentProcesses = useMemo(
+    () => processes.filter((process) => isLikelyAgent(process)),
     [processes],
   );
+
+  const visibleProcesses = useMemo(() => {
+    const base = showOnlyAgents ? likelyAgentProcesses : processes;
+    const keyword = searchText.trim().toLowerCase();
+
+    return base
+      .filter((process) => {
+        if (riskFilter !== 'all' && process.risk !== riskFilter) {
+          return false;
+        }
+
+        if (!keyword) {
+          return true;
+        }
+
+        const text = `${process.name} ${process.command} ${process.user}`.toLowerCase();
+        return text.includes(keyword);
+      })
+      .sort((a, b) => {
+        const byRisk = riskWeight(b.risk) - riskWeight(a.risk);
+        if (byRisk !== 0) return byRisk;
+        return b.events - a.events || b.cpu - a.cpu || b.memory - a.memory;
+      });
+  }, [showOnlyAgents, likelyAgentProcesses, processes, riskFilter, searchText]);
+
+  const overview = useMemo(() => {
+    const scoped = likelyAgentProcesses;
+    const protectedCount = scoped.filter((p) => isProtected(p)).length;
+    const unprotected = scoped.filter((p) => !isProtected(p));
+
+    return {
+      totalAgents: scoped.length,
+      highRisk: scoped.filter((p) => p.risk === 'high').length,
+      mediumRisk: scoped.filter((p) => p.risk === 'medium').length,
+      lowRisk: scoped.filter((p) => p.risk === 'low').length,
+      protectedCount,
+      unprotectedCount: unprotected.length,
+      urgentUnprotected: [...unprotected]
+        .sort((a, b) => riskWeight(b.risk) - riskWeight(a.risk) || b.cpu - a.cpu)
+        .slice(0, 5),
+    };
+  }, [likelyAgentProcesses]);
 
   const formatUptime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -80,14 +136,86 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
           <h1>{t.processes.title}</h1>
           <p>{t.processes.subtitle}</p>
         </div>
-        <button className="btn btn-secondary" onClick={onRefresh}>
-          {t.processes.refresh}
-        </button>
+        <div className="page-actions">
+          <button className="btn btn-secondary" onClick={onRefresh}>
+            {t.processes.refresh}
+          </button>
+          <button className="btn btn-primary" onClick={onOpenSetup}>
+            去快速接入
+          </button>
+        </div>
       </header>
+
+      <div className="processes-overview">
+        <div className="overview-card">
+          <div className="overview-label">识别到 Agent 进程</div>
+          <div className="overview-value">{overview.totalAgents}</div>
+        </div>
+        <div className="overview-card high">
+          <div className="overview-label">高风险</div>
+          <div className="overview-value">{overview.highRisk}</div>
+        </div>
+        <div className="overview-card protected">
+          <div className="overview-label">已受保护</div>
+          <div className="overview-value">{overview.protectedCount}</div>
+        </div>
+        <div className="overview-card unprotected">
+          <div className="overview-label">未受保护</div>
+          <div className="overview-value">{overview.unprotectedCount}</div>
+        </div>
+      </div>
+
+      {overview.urgentUnprotected.length > 0 && (
+        <div className="urgent-panel">
+          <div className="urgent-title">需要优先处理的未受保护 Agent</div>
+          <div className="urgent-list">
+            {overview.urgentUnprotected.map((process) => (
+              <button
+                key={`urgent-${process.pid}`}
+                className="urgent-item"
+                onClick={() => handleViewDetails(process)}
+              >
+                <span className={`risk-chip ${process.risk}`}>{process.risk.toUpperCase()}</span>
+                <span className="urgent-name">{process.name}</span>
+                <span className="urgent-meta">PID {process.pid} · CPU {process.cpu.toFixed(1)}%</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="process-filters">
+        <label className="toggle-inline">
+          <input
+            type="checkbox"
+            checked={showOnlyAgents}
+            onChange={(e) => setShowOnlyAgents(e.target.checked)}
+          />
+          仅看 Agent 相关进程
+        </label>
+
+        <input
+          className="search-input"
+          placeholder="搜索进程名 / 命令 / 用户"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+        />
+
+        <select
+          className="filter-select"
+          value={riskFilter}
+          onChange={(e) => setRiskFilter(e.target.value as 'all' | 'high' | 'medium' | 'low')}
+        >
+          <option value="all">全部风险</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
 
       {/* 进程卡片网格 */}
       <div className="processes-grid">
-        {sortedProcesses.map((process) => (
+        {visibleProcesses.map((process) => (
           <div key={process.pid} className="process-card">
             <div className="process-header">
               <div className="process-icon">⚙️</div>
@@ -95,6 +223,10 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                 <h3 className="process-name">{process.name}</h3>
                 <span className="process-pid">PID: {process.pid}</span>
               </div>
+              <div className={`coverage-chip ${isProtected(process) ? 'protected' : 'unprotected'}`}>
+                {isProtected(process) ? 'Protected' : 'Unprotected'}
+              </div>
+              <div className={`risk-chip ${process.risk}`}>{process.risk.toUpperCase()}</div>
               <div 
                 className="process-status"
                 style={{ backgroundColor: getStatusColor(process.status) }}
@@ -154,7 +286,7 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
         ))}
       </div>
 
-      {sortedProcesses.length === 0 && (
+      {visibleProcesses.length === 0 && (
         <div className="empty-state">{t.processes.noProcesses}</div>
       )}
 

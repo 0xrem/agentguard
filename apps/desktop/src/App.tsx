@@ -989,6 +989,7 @@ export default function App() {
           loading={processesLoading || loading}
           processes={processes}
           onRefresh={() => void refreshProcesses()}
+          onOpenSetup={() => setCurrentPage('setup')}
         />
       )}
       
