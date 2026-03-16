@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useLanguage, type Language } from '../i18n';
 
 interface SettingsPageProps {
@@ -8,6 +7,8 @@ interface SettingsPageProps {
   onDarkModeChange: (enabled: boolean) => void;
   notificationsEnabled: boolean;
   onNotificationsChange: (enabled: boolean) => void;
+  autoStartStack: boolean;
+  onAutoStartStackChange: (enabled: boolean) => void;
   dataRetentionDays: number;
   onDataRetentionChange: (days: number) => void;
 }
@@ -19,6 +20,8 @@ export function SettingsPage({
   onDarkModeChange,
   notificationsEnabled,
   onNotificationsChange,
+  autoStartStack,
+  onAutoStartStackChange,
   dataRetentionDays,
   onDataRetentionChange,
 }: SettingsPageProps) {
@@ -105,6 +108,30 @@ export function SettingsPage({
               {notificationsEnabled
                 ? (currentLanguage === 'zh' ? '审批请求和重要事件将显示通知' : 'Notifications for approval requests and important events')
                 : (currentLanguage === 'zh' ? '通知已禁用' : 'Notifications are disabled')}
+            </p>
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <h2>🚀 {t.settings.autoStartStack}</h2>
+          </div>
+          <div className="settings-card-body">
+            <div className="setting-row">
+              <label className="setting-label">{t.settings.autoStartStackDescription}</label>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={autoStartStack}
+                  onChange={(e) => onAutoStartStackChange(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
+            <p className="setting-description">
+              {autoStartStack
+                ? (currentLanguage === 'zh' ? '应用启动时会自动拉起 daemon 和 proxy' : 'Daemon and proxy will auto-start when the app opens')
+                : (currentLanguage === 'zh' ? '需手动点击启动本地栈' : 'Start local stack manually when needed')}
             </p>
           </div>
         </section>

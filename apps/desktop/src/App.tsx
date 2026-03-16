@@ -44,6 +44,7 @@ import type {
 
 const AUDIT_PAGE_SIZE = 50;
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const AUTO_START_STACK_KEY = "agentguard:autoStartStack";
 
 const KNOWN_AGENT_PROCESS_PATTERNS: RegExp[] = [
   /claude/i,
@@ -185,6 +186,15 @@ export default function App() {
   const [lastProtectionFix, setLastProtectionFix] = useState<ProtectionFixResult | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dataRetentionDays, setDataRetentionDays] = useState(30);
+  const [autoStartStack, setAutoStartStack] = useState<boolean>(() => {
+    try {
+      const raw = window.localStorage.getItem(AUTO_START_STACK_KEY);
+      return raw === null ? true : raw === "1";
+    } catch {
+      return true;
+    }
+  });
+  const [autoStartAttempted, setAutoStartAttempted] = useState(false);
 
   useEffect(() => {
     void refreshDashboard(true);
@@ -195,6 +205,14 @@ export default function App() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUTO_START_STACK_KEY, autoStartStack ? "1" : "0");
+    } catch {
+      // Ignore localStorage persistence issues.
+    }
+  }, [autoStartStack]);
 
   const pendingApprovals = snapshot?.pending_approvals ?? [];
   const [userDismissedApproval, setUserDismissedApproval] = useState<number | null>(null);
@@ -354,6 +372,20 @@ export default function App() {
 
     return () => window.clearInterval(timer);
   }, [currentPage]);
+
+  useEffect(() => {
+    if (!autoStartStack || autoStartAttempted || loading || startingStack || !runtimeEnvironment) {
+      return;
+    }
+
+    const stackReady = Boolean(runtimeEnvironment.daemon_source) && Boolean(runtimeEnvironment.proxy_source);
+    if (stackReady) {
+      return;
+    }
+
+    setAutoStartAttempted(true);
+    void handleStartLocalStack();
+  }, [autoStartAttempted, autoStartStack, loading, runtimeEnvironment, startingStack]);
 
   async function handleResolveApproval(action: Exclude<EnforcementAction, "ask">) {
     const activeApproval = getActiveApproval(pendingApprovals, activeApprovalId);
@@ -929,6 +961,8 @@ export default function App() {
           onDarkModeChange={setDarkMode}
           notificationsEnabled={notificationsEnabled}
           onNotificationsChange={setNotificationsEnabled}
+          autoStartStack={autoStartStack}
+          onAutoStartStackChange={setAutoStartStack}
           dataRetentionDays={dataRetentionDays}
           onDataRetentionChange={setDataRetentionDays}
         />

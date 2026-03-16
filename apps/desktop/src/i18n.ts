@@ -136,6 +136,8 @@ export interface Translation {
     themeDescription: string;
     notifications: string;
     notificationsDescription: string;
+    autoStartStack: string;
+    autoStartStackDescription: string;
     autoApprove: string;
     autoApproveDescription: string;
     dataRetention: string;
@@ -302,6 +304,8 @@ export const translations: Record<'en' | 'zh', Translation> = {
       themeDescription: 'Customize the appearance',
       notifications: 'Notifications',
       notificationsDescription: 'Enable desktop notifications',
+      autoStartStack: 'Auto Start Stack',
+      autoStartStackDescription: 'Start daemon and proxy automatically on app launch',
       autoApprove: 'Auto Approve',
       autoApproveDescription: 'Automatically approve low-risk events',
       dataRetention: 'Data Retention',
@@ -466,6 +470,8 @@ export const translations: Record<'en' | 'zh', Translation> = {
       themeDescription: '自定义外观',
       notifications: '通知',
       notificationsDescription: '启用桌面通知',
+      autoStartStack: '自动启动本地栈',
+      autoStartStackDescription: '应用启动时自动拉起 daemon 和 proxy',
       autoApprove: '自动审批',
       autoApproveDescription: '自动批准低风险事件',
       dataRetention: '数据保留',
