@@ -93,6 +93,7 @@ export function Dashboard({
   const { t } = useLanguage();
   const [showRecentActivity, setShowRecentActivity] = useState(false);
   const [showRecoveredSessions, setShowRecoveredSessions] = useState(false);
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'prompt' | 'command' | 'behavior'>('all');
   
   const totalEvents = snapshot?.records.length ?? 0;
   const pendingApprovals = snapshot?.pending_approvals ?? [];
@@ -149,6 +150,11 @@ export function Dashboard({
       .filter((record) => record.event.agent.name === selectedAgentName)
       .slice(0, 20);
   }, [selectedAgentName, snapshot]);
+
+  const filteredTimelineEvents = useMemo(() => {
+    if (timelineFilter === 'all') return selectedAgentEvents;
+    return selectedAgentEvents.filter((record) => eventCategory(record) === timelineFilter);
+  }, [selectedAgentEvents, timelineFilter]);
 
   const selectedAgentAnomalies = useMemo(
     () => selectedAgentEvents.filter((record) => ['ask', 'warn', 'block', 'kill'].includes(record.decision.action)),
@@ -303,19 +309,29 @@ export function Dashboard({
             <h2>Live Step Timeline</h2>
             {selectedAgent ? <span className="agent-selected">{selectedAgent.name}</span> : null}
           </div>
+          <div className="timeline-filter-row">
+            <button className={`btn btn-sm ${timelineFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTimelineFilter('all')}>All</button>
+            <button className={`btn btn-sm ${timelineFilter === 'prompt' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTimelineFilter('prompt')}>Prompt</button>
+            <button className={`btn btn-sm ${timelineFilter === 'command' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTimelineFilter('command')}>Command</button>
+            <button className={`btn btn-sm ${timelineFilter === 'behavior' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setTimelineFilter('behavior')}>Behavior</button>
+          </div>
           {!selectedAgent ? (
             <div className="empty-state">请先选择一个 Agent。</div>
-          ) : selectedAgentEvents.length === 0 ? (
+          ) : filteredTimelineEvents.length === 0 ? (
             <div className="empty-state">该 Agent 暂无行为记录。先触发一次操作再观察。</div>
           ) : (
             <div className="timeline-feed">
-              {selectedAgentEvents.map((record) => (
+              {filteredTimelineEvents.map((record) => (
                 <div key={record.id} className="timeline-event">
                   <div className="timeline-head">
                     <span className={`action-badge ${record.decision.action}`}>{record.decision.action.toUpperCase()}</span>
                     <span className="timeline-time">{new Date(record.recorded_at_unix_ms).toLocaleTimeString()}</span>
                   </div>
-                  <div className="timeline-operation">{record.event.operation}</div>
+                  <div className="timeline-operation">
+                    <span className="timeline-category">{eventCategory(record).toUpperCase()}</span>
+                    <span>{record.event.operation}</span>
+                  </div>
+                  <div className="timeline-primary">{eventPrimaryText(record)}</div>
                   <div className="timeline-target">
                     {record.event.target.kind}: {record.event.target.kind === 'none' ? '(none)' : record.event.target.value}
                   </div>
@@ -428,6 +444,9 @@ export function Dashboard({
                     <div className="pending-approval-detail">
                       {approval.audit_record.event.operation} · {approval.audit_record.event.target.kind === 'none' ? '(none)' : approval.audit_record.event.target.value}
                     </div>
+                    <div className="pending-approval-guidance">
+                      建议：{recommendedApprovalAction(approval.audit_record) === 'allow' ? '低风险可批准' : '高风险建议拒绝并检查命令/提示词'}
+                    </div>
                     <div className="pending-approval-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => onQuickResolveApproval(approval.id, 'allow')}>
                         批准
@@ -475,4 +494,43 @@ export function Dashboard({
       </div>
     </div>
   );
+}
+
+function eventCategory(record: AuditRecord): 'prompt' | 'command' | 'behavior' {
+  if (record.event.layer === 'prompt' || record.event.operation === 'model_request' || record.event.operation === 'model_response') {
+    return 'prompt';
+  }
+  if (record.event.operation === 'exec_command') {
+    return 'command';
+  }
+  return 'behavior';
+}
+
+function eventPrimaryText(record: AuditRecord): string {
+  const target = record.event.target.kind === 'none' ? '' : record.event.target.value;
+  if (eventCategory(record) === 'prompt') {
+    const text = target || record.event.metadata?.prompt || record.decision.reason;
+    return truncate(text, 140);
+  }
+  if (eventCategory(record) === 'command') {
+    return truncate(target || 'command executed', 140);
+  }
+  return truncate(target || `${record.event.operation}`, 120);
+}
+
+function recommendedApprovalAction(record: AuditRecord): 'allow' | 'block' {
+  const highRisk = record.decision.risk === 'high' || record.decision.risk === 'critical';
+  if (highRisk) return 'block';
+  if (record.event.operation === 'exec_command' && record.event.target.kind !== 'none') {
+    const command = record.event.target.value.toLowerCase();
+    if (command.includes('rm ') || command.includes('sudo ') || command.includes('curl ')) {
+      return 'block';
+    }
+  }
+  return 'allow';
+}
+
+function truncate(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}...`;
 }

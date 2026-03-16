@@ -1943,6 +1943,13 @@ textarea {
   overflow: auto;
 }
 
+.timeline-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .timeline-event {
   border: 1px solid rgba(24, 35, 50, 0.12);
   border-radius: 10px;
@@ -1987,10 +1994,30 @@ textarea {
 }
 
 .timeline-operation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 700;
   color: #0f172a;
   margin-bottom: 4px;
   font-size: 0.86rem;
+}
+
+.timeline-category {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.68rem;
+  background: rgba(15, 118, 110, 0.14);
+  color: #0f766e;
+}
+
+.timeline-primary {
+  color: #1e293b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 .timeline-target {
@@ -2031,6 +2058,15 @@ textarea {
   color: #475569;
   font-size: 0.78rem;
   word-break: break-word;
+}
+
+.pending-approval-guidance {
+  font-size: 0.76rem;
+  color: #7c2d12;
+  background: rgba(254, 243, 199, 0.7);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
 .pending-approval-actions {
