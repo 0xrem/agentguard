@@ -144,6 +144,10 @@ struct RuleConflict {
 struct RuntimeProcessInfo {
     pid: u32,
     name: String,
+    #[serde(rename = "isAgentLike")]
+    is_agent_like: bool,
+    #[serde(rename = "agentFamily")]
+    agent_family: String,
     risk: String,
     status: String,
     #[serde(rename = "coverageStatus")]
@@ -754,11 +758,14 @@ async fn list_runtime_processes(
             .unwrap_or(comm)
             .to_string();
 
+        let (is_agent_like, agent_family) = classify_agent_family(&name, &command);
+
         let events = event_count_by_pid.get(&pid).copied().unwrap_or(0);
         let last_event_at = last_event_at_by_pid.get(&pid).copied();
         let coverage = classify_process_coverage(
             &name,
             &command,
+            is_agent_like,
             events,
             last_event_at,
             now_ms,
@@ -767,6 +774,8 @@ async fn list_runtime_processes(
         processes.push(RuntimeProcessInfo {
             pid,
             name,
+            is_agent_like,
+            agent_family,
             risk: classify_process_risk(&command, cpu, rss_kb / 1024.0).into(),
             status: map_ps_state(state),
             coverage_status: coverage.status,
@@ -985,13 +994,14 @@ fn classify_process_risk(command: &str, cpu: f32, memory_mb: f32) -> &'static st
 fn classify_process_coverage(
     name: &str,
     command: &str,
+    is_agent_like: bool,
     events: u32,
     last_event_at_unix_ms: Option<i64>,
     now_unix_ms: i64,
 ) -> CoverageAssessment {
     let mut evidence: Vec<CoverageEvidence> = Vec::new();
 
-    if is_likely_agent_process(name, command) {
+    if is_agent_like {
         evidence.push(CoverageEvidence {
             kind: "agent_signature".into(),
             label: "Agent Signature".into(),
@@ -1030,7 +1040,7 @@ fn classify_process_coverage(
         };
     }
 
-    if is_likely_agent_process(name, command) {
+    if is_agent_like {
         evidence.push(CoverageEvidence {
             kind: "audit_link".into(),
             label: "Audit Link".into(),
@@ -1065,21 +1075,33 @@ fn classify_process_coverage(
     }
 }
 
-fn is_likely_agent_process(name: &str, command: &str) -> bool {
+fn classify_agent_family(name: &str, command: &str) -> (bool, String) {
     let text = format!("{} {}", name.to_ascii_lowercase(), command.to_ascii_lowercase());
-    [
-        "claude",
-        "cursor",
-        "aider",
-        "autogpt",
-        "copilot",
-        "codex",
-        "langchain",
-        "llamaindex",
-        "agent",
-    ]
-    .iter()
-    .any(|pattern| text.contains(pattern))
+
+    let checks: [(&str, &[&str]); 8] = [
+        ("claude", &["claude"]),
+        ("cursor", &["cursor"]),
+        ("aider", &["aider"]),
+        ("autogpt", &["autogpt"]),
+        ("copilot", &["copilot"]),
+        ("codex", &["codex"]),
+        ("langchain", &["langchain"]),
+        ("llamaindex", &["llamaindex"]),
+    ];
+
+    for (family, patterns) in checks {
+        if patterns.iter().any(|pattern| text.contains(pattern)) {
+            return (true, family.to_string());
+        }
+    }
+
+    if (text.contains("python") || text.contains("node") || text.contains("uv ") || text.contains("npm "))
+        && (text.contains("agent") || text.contains("assistant"))
+    {
+        return (true, "generic".to_string());
+    }
+
+    (false, "unknown".to_string())
 }
 
 fn format_relative_age(delta_ms: i64) -> String {

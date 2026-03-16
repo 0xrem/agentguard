@@ -184,6 +184,8 @@ export function mockLoadProcesses(limit = 80): RuntimeProcessInfo[] {
     {
       pid: 4301,
       name: "agentguard-daemon",
+      isAgentLike: false,
+      agentFamily: "unknown",
       risk: "low",
       status: "running",
       coverageStatus: "protected",
@@ -209,6 +211,8 @@ export function mockLoadProcesses(limit = 80): RuntimeProcessInfo[] {
     {
       pid: 4302,
       name: "agentguard-proxy",
+      isAgentLike: false,
+      agentFamily: "unknown",
       risk: "low",
       status: "running",
       coverageStatus: "protected",
@@ -234,6 +238,8 @@ export function mockLoadProcesses(limit = 80): RuntimeProcessInfo[] {
     {
       pid: 10932,
       name: "claude",
+      isAgentLike: true,
+      agentFamily: "claude",
       risk: "medium",
       status: "running",
       coverageStatus: "protected",

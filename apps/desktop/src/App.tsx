@@ -56,16 +56,6 @@ const COVERAGE_REGRESSION_MIN_MS = 20_000;
 const COVERAGE_REGRESSION_COOLDOWN_MS = 120_000;
 const AUTO_START_STACK_KEY = "agentguard:autoStartStack";
 
-const KNOWN_AGENT_PROCESS_PATTERNS: RegExp[] = [
-  /claude/i,
-  /cursor/i,
-  /aider/i,
-  /autogpt/i,
-  /copilot/i,
-  /codex/i,
-  /agent/i,
-];
-
 interface ProtectionAlert {
   id: string;
   severity: "critical" | "warning";
@@ -880,11 +870,7 @@ export default function App() {
   const editingRule = rememberedRules.find((rule) => rule.id === editingRuleId) ?? null;
   const runtimeIssues = runtimeEnvironment?.issues ?? [];
   const likelyAgentProcesses = useMemo(
-    () =>
-      processes.filter((process) => {
-        const searchText = `${process.name} ${process.command}`;
-        return KNOWN_AGENT_PROCESS_PATTERNS.some((pattern) => pattern.test(searchText));
-      }),
+    () => processes.filter((process) => process.isAgentLike),
     [processes],
   );
 

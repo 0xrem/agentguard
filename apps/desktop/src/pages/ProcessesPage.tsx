@@ -20,18 +20,11 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const previousCoverageRef = useRef<Record<number, RuntimeProcessInfo['coverageStatus']>>({});
 
-  const AGENT_PATTERNS = [/claude/i, /cursor/i, /aider/i, /autogpt/i, /copilot/i, /codex/i, /agent/i, /langchain/i, /llamaindex/i];
-
-  const isLikelyAgent = (process: RuntimeProcessInfo) => {
-    const text = `${process.name} ${process.command}`;
-    return AGENT_PATTERNS.some((pattern) => pattern.test(text));
-  };
-
   const isProtected = (process: RuntimeProcessInfo) => process.coverageStatus === 'protected';
   const riskWeight = (risk: RuntimeProcessInfo['risk']) => (risk === 'high' ? 3 : risk === 'medium' ? 2 : 1);
 
   const likelyAgentProcesses = useMemo(
-    () => processes.filter((process) => isLikelyAgent(process)),
+    () => processes.filter((process) => process.isAgentLike),
     [processes],
   );
 
@@ -155,8 +148,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
   }, [likelyAgentProcesses]);
 
   const getSetupGuidance = (process: RuntimeProcessInfo) => {
-    const text = `${process.name} ${process.command}`.toLowerCase();
-    if (text.includes('claude')) {
+    if (process.agentFamily === 'claude') {
       return {
         title: 'Claude Code 快速接入建议',
         steps: [
@@ -166,7 +158,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         ],
       };
     }
-    if (text.includes('cursor')) {
+    if (process.agentFamily === 'cursor') {
       return {
         title: 'Cursor 快速接入建议',
         steps: [
@@ -176,7 +168,12 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         ],
       };
     }
-    if (text.includes('python') || text.includes('aider') || text.includes('langchain') || text.includes('llamaindex')) {
+    if (
+      process.agentFamily === 'aider' ||
+      process.agentFamily === 'langchain' ||
+      process.agentFamily === 'llamaindex' ||
+      process.agentFamily === 'generic'
+    ) {
       return {
         title: 'Python Agent 快速接入建议',
         steps: [
@@ -198,8 +195,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
   };
 
   const getSetupCommands = (process: RuntimeProcessInfo) => {
-    const text = `${process.name} ${process.command}`.toLowerCase();
-    if (text.includes('claude')) {
+    if (process.agentFamily === 'claude') {
       return [
         {
           label: 'Claude Code',
@@ -207,7 +203,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         },
       ];
     }
-    if (text.includes('cursor')) {
+    if (process.agentFamily === 'cursor') {
       return [
         {
           label: 'Cursor',
@@ -215,7 +211,12 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         },
       ];
     }
-    if (text.includes('python') || text.includes('aider') || text.includes('langchain') || text.includes('llamaindex')) {
+    if (
+      process.agentFamily === 'aider' ||
+      process.agentFamily === 'langchain' ||
+      process.agentFamily === 'llamaindex' ||
+      process.agentFamily === 'generic'
+    ) {
       return [
         {
           label: 'Python Agent',

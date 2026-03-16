@@ -108,6 +108,8 @@ export interface RuntimeEnvironment {
 export interface RuntimeProcessInfo {
   pid: number;
   name: string;
+  isAgentLike: boolean;
+  agentFamily: "claude" | "cursor" | "aider" | "autogpt" | "copilot" | "codex" | "langchain" | "llamaindex" | "generic" | "unknown";
   risk: "high" | "medium" | "low";
   status: "running" | "stopped" | "zombie";
   coverageStatus: "protected" | "likely_unprotected" | "unknown";
