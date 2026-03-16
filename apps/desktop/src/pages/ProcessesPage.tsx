@@ -7,9 +7,22 @@ interface ProcessesPageProps {
   processes: RuntimeProcessInfo[];
   onRefresh: () => void;
   onOpenSetup: () => void;
+  processDataMode: 'live' | 'constructed' | 'mock';
+  syntheticAgentCount: number;
+  onProcessDataModeChange: (mode: 'live' | 'constructed' | 'mock') => void;
+  onSyntheticAgentCountChange: (count: number) => void;
 }
 
-export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: ProcessesPageProps) {
+export function ProcessesPage({
+  loading,
+  processes,
+  onRefresh,
+  onOpenSetup,
+  processDataMode,
+  syntheticAgentCount,
+  onProcessDataModeChange,
+  onSyntheticAgentCountChange,
+}: ProcessesPageProps) {
   const { t } = useLanguage();
   const [selectedProcess, setSelectedProcess] = useState<RuntimeProcessInfo | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -269,6 +282,42 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
           </button>
         </div>
       </header>
+
+      <section className="process-source-panel">
+        <div className="process-source-title">数据模式</div>
+        <div className="process-source-controls">
+          <label>
+            <span>来源</span>
+            <select
+              className="setting-select"
+              value={processDataMode}
+              onChange={(e) => onProcessDataModeChange(e.target.value as 'live' | 'constructed' | 'mock')}
+            >
+              <option value="live">实时进程（Live）</option>
+              <option value="constructed">实时 + 构造 Agent（Constructed）</option>
+              <option value="mock">模拟数据（Mock）</option>
+            </select>
+          </label>
+          {processDataMode === 'constructed' && (
+            <label>
+              <span>构造 Agent 数量</span>
+              <input
+                className="setting-range"
+                type="range"
+                min={1}
+                max={24}
+                step={1}
+                value={syntheticAgentCount}
+                onChange={(e) => onSyntheticAgentCountChange(Number(e.target.value))}
+              />
+              <strong>{syntheticAgentCount}</strong>
+            </label>
+          )}
+        </div>
+        <p className="process-source-hint">
+          实时模式优先真实数据；高级功能无法复现时自动用构造进程；再不行切到 Mock 保证联调。
+        </p>
+      </section>
 
       <div className="processes-overview">
         <div className="overview-card">

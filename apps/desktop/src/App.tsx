@@ -18,6 +18,7 @@ import {
   submitSampleEvent,
   updateAuditReview,
 } from "./api";
+import { mockLoadProcesses } from "./mock";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
 import { AuditPage } from "./pages/AuditPage";
@@ -55,6 +56,17 @@ const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const COVERAGE_REGRESSION_MIN_MS = 20_000;
 const COVERAGE_REGRESSION_COOLDOWN_MS = 120_000;
 const AUTO_START_STACK_KEY = "agentguard:autoStartStack";
+const PROCESS_DATA_MODE_KEY = "agentguard:processDataMode";
+const SYNTHETIC_AGENT_COUNT_KEY = "agentguard:syntheticAgentCount";
+
+type ProcessDataMode = "live" | "constructed" | "mock";
+
+interface SelfTestCheck {
+  id: string;
+  label: string;
+  status: "pass" | "fail";
+  detail: string;
+}
 
 interface ProtectionAlert {
   id: string;
@@ -215,6 +227,31 @@ export default function App() {
     }
   });
   const [autoStartAttempted, setAutoStartAttempted] = useState(false);
+  const [processDataMode, setProcessDataMode] = useState<ProcessDataMode>(() => {
+    try {
+      const raw = window.localStorage.getItem(PROCESS_DATA_MODE_KEY);
+      return raw === "constructed" || raw === "mock" ? raw : "live";
+    } catch {
+      return "live";
+    }
+  });
+  const [syntheticAgentCount, setSyntheticAgentCount] = useState<number>(() => {
+    try {
+      const raw = Number(window.localStorage.getItem(SYNTHETIC_AGENT_COUNT_KEY));
+      if (Number.isFinite(raw) && raw >= 0 && raw <= 24) {
+        return Math.floor(raw);
+      }
+      return 6;
+    } catch {
+      return 6;
+    }
+  });
+  const [selfTestRunning, setSelfTestRunning] = useState(false);
+  const [selfTestReport, setSelfTestReport] = useState<{
+    checkedAt: number;
+    allPassed: boolean;
+    checks: SelfTestCheck[];
+  } | null>(null);
 
   const [auditStats, setAuditStats] = useState<AuditStats | null>(null);
   const [ruleConflicts, setRuleConflicts] = useState<RuleConflict[]>([]);
@@ -236,6 +273,22 @@ export default function App() {
       // Ignore localStorage persistence issues.
     }
   }, [autoStartStack]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PROCESS_DATA_MODE_KEY, processDataMode);
+    } catch {
+      // Ignore localStorage persistence issues.
+    }
+  }, [processDataMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SYNTHETIC_AGENT_COUNT_KEY, String(syntheticAgentCount));
+    } catch {
+      // Ignore localStorage persistence issues.
+    }
+  }, [syntheticAgentCount]);
 
   const pendingApprovals = snapshot?.pending_approvals ?? [];
   const [userDismissedApproval, setUserDismissedApproval] = useState<number | null>(null);
@@ -289,7 +342,7 @@ export default function App() {
       const [nextSnapshot, nextRuntimeEnvironment, nextProcesses, nextStats] = await Promise.all([
         loadDashboard(30),
         loadRuntimeEnvironment(),
-        loadProcesses(120).catch(() => []),
+        fetchProcessFeed(processDataMode, syntheticAgentCount).catch(() => []),
         getAuditStats(Date.now() - 86_400_000).catch(() => null),
       ]);
       setError(null);
@@ -410,7 +463,7 @@ export default function App() {
   async function refreshProcesses() {
     setProcessesLoading(true);
     try {
-      const next = await loadProcesses(120);
+      const next = await fetchProcessFeed(processDataMode, syntheticAgentCount);
       setProcesses(smoothRuntimeProcesses(next, processNetworkCacheRef.current));
       setError(null);
     } catch (processError) {
@@ -431,7 +484,59 @@ export default function App() {
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [currentPage]);
+  }, [currentPage, processDataMode, syntheticAgentCount]);
+
+  async function runSelfTestSuite() {
+    setSelfTestRunning(true);
+    const checks: SelfTestCheck[] = [];
+
+    async function check(label: string, fn: () => Promise<void>) {
+      try {
+        await fn();
+        checks.push({ id: label, label, status: "pass", detail: "OK" });
+      } catch (error) {
+        checks.push({
+          id: label,
+          label,
+          status: "fail",
+          detail: getErrorMessage(error),
+        });
+      }
+    }
+
+    await check("Runtime environment", async () => {
+      await loadRuntimeEnvironment();
+    });
+    await check("Dashboard snapshot", async () => {
+      const dashboard = await loadDashboard(10);
+      if (!dashboard.status) {
+        throw new Error("Missing dashboard status payload");
+      }
+    });
+    await check("Process feed", async () => {
+      const list = await fetchProcessFeed(processDataMode, syntheticAgentCount);
+      if (!Array.isArray(list) || list.length === 0) {
+        throw new Error("No process data returned");
+      }
+    });
+    await check("Audit stats", async () => {
+      await getAuditStats(Date.now() - 86_400_000);
+    });
+    await check("Rule conflict detector", async () => {
+      await detectRuleConflicts();
+    });
+    await check("Sample event path", async () => {
+      await submitSampleEvent("safe_read");
+    });
+
+    const allPassed = checks.every((item) => item.status === "pass");
+    setSelfTestReport({
+      checkedAt: Date.now(),
+      allPassed,
+      checks,
+    });
+    setSelfTestRunning(false);
+  }
 
   useEffect(() => {
     if (!autoStartStack || autoStartAttempted || loading || startingStack || !runtimeEnvironment) {
@@ -1121,6 +1226,10 @@ export default function App() {
           processes={processes}
           onRefresh={() => void refreshProcesses()}
           onOpenSetup={() => setCurrentPage('setup')}
+          processDataMode={processDataMode}
+          syntheticAgentCount={syntheticAgentCount}
+          onProcessDataModeChange={setProcessDataMode}
+          onSyntheticAgentCountChange={setSyntheticAgentCount}
         />
       )}
       
@@ -1152,6 +1261,13 @@ export default function App() {
           onAutoStartStackChange={setAutoStartStack}
           dataRetentionDays={dataRetentionDays}
           onDataRetentionChange={setDataRetentionDays}
+          processDataMode={processDataMode}
+          syntheticAgentCount={syntheticAgentCount}
+          onProcessDataModeChange={setProcessDataMode}
+          onSyntheticAgentCountChange={setSyntheticAgentCount}
+          selfTestRunning={selfTestRunning}
+          selfTestReport={selfTestReport}
+          onRunSelfTest={() => void runSelfTestSuite()}
         />
       )}
 
@@ -1710,4 +1826,72 @@ function smoothRuntimeProcesses(
   Object.assign(cache, nextCache);
 
   return smoothed;
+}
+
+async function fetchProcessFeed(
+  mode: ProcessDataMode,
+  syntheticAgentCount: number,
+): Promise<RuntimeProcessInfo[]> {
+  if (mode === "mock") {
+    return mockLoadProcesses(120);
+  }
+
+  const live = await loadProcesses(120);
+  if (mode !== "constructed") {
+    return live;
+  }
+
+  return [...live, ...buildSyntheticAgents(syntheticAgentCount)];
+}
+
+function buildSyntheticAgents(count: number): RuntimeProcessInfo[] {
+  const safeCount = Math.max(0, Math.min(24, Math.floor(count)));
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
+  const families: RuntimeProcessInfo["agentFamily"][] = [
+    "claude",
+    "cursor",
+    "aider",
+    "copilot",
+    "langchain",
+    "llamaindex",
+    "generic",
+  ];
+
+  return Array.from({ length: safeCount }, (_, index) => {
+    const family = families[index % families.length];
+    const risk: RuntimeProcessInfo["risk"] = index % 5 === 0 ? "high" : index % 2 === 0 ? "medium" : "low";
+    const coverageStatus: RuntimeProcessInfo["coverageStatus"] = index % 4 === 0 ? "likely_unprotected" : "protected";
+    const events = coverageStatus === "protected" ? 6 + (index % 9) : index % 3;
+    return {
+      pid: 70000 + index,
+      name: `synthetic-${family}-agent-${index + 1}`,
+      isAgentLike: true,
+      agentFamily: family,
+      risk,
+      status: "running",
+      coverageStatus,
+      coverageReason:
+        coverageStatus === "protected"
+          ? `Synthetic probe confirms protected flow with ${events} event(s).`
+          : "Synthetic probe marks this session as likely unprotected.",
+      coverageConfidence: coverageStatus === "protected" ? "high" : "medium",
+      coverageScore: coverageStatus === "protected" ? 82 - (index % 7) : 34 + (index % 12),
+      coverageEvidence: [
+        { kind: "agent_signature", label: "Synthetic Agent Signature", value: family, weight: 36 },
+        { kind: "runtime_signal", label: "Synthetic Runtime Events", value: String(events), weight: 48 },
+      ],
+      lastEventAtUnixMs: nowMs - (index + 1) * 10_000,
+      cpu: 2 + (index % 7) * 3.1,
+      memory: 140 + (index % 8) * 62,
+      network: coverageStatus === "protected" ? 3 + (index % 6) : 0,
+      networkSource: "nettop_delta",
+      events,
+      uptime: 900 + (index % 6) * 1400,
+      command: `${family} --synthetic --workspace /tmp/agentguard-lab-${index + 1}`,
+      user: "synthetic",
+      threads: 4 + (index % 4),
+      openFiles: 11 + (index % 9),
+    };
+  });
 }

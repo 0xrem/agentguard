@@ -2,6 +2,14 @@
 
 Last updated: 2026-03-16
 
+## 1.1.0 Iteration Snapshot
+
+- desktop version metadata bumped to `1.1.0`
+- process page now supports `Live / Constructed / Mock` data modes
+- when advanced runtime paths are unavailable, synthetic agent processes can be generated for coverage/testing
+- settings page now includes a one-click self-test suite for core paths
+- button state regression preview is embedded in Test Lab to catch style regressions before release
+
 This file is the current source of truth for collaborators.
 If README, roadmap notes, or historical summaries disagree with this file, trust this file first.
 

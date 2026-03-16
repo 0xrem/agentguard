@@ -999,6 +999,15 @@ textarea {
   .process-filters {
     grid-template-columns: 1fr;
   }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .process-source-controls {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* Template Modal Styles */
@@ -2375,6 +2384,133 @@ textarea {
   margin: 0 auto;
 }
 
+.settings-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.settings-card-header h2 {
+  margin: 0;
+  color: #1f2d3d;
+  font-size: 1rem;
+}
+
+.settings-card-body {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.setting-select {
+  border: 1px solid rgba(24, 35, 50, 0.15);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #1f2d3d;
+}
+
+.setting-range {
+  width: 180px;
+}
+
+.about-info {
+  display: grid;
+  gap: 8px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.info-label {
+  color: #5c6d81;
+  font-size: 0.82rem;
+}
+
+.info-value {
+  color: #1f2d3d;
+  font-weight: 700;
+}
+
+.info-link {
+  color: #0f766e;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.selftest-report {
+  border: 1px solid rgba(24, 35, 50, 0.12);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.selftest-report.pass {
+  border-color: rgba(22, 163, 74, 0.4);
+}
+
+.selftest-report.fail {
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.selftest-summary {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #1f2d3d;
+  margin-bottom: 8px;
+}
+
+.selftest-list {
+  display: grid;
+  gap: 8px;
+}
+
+.selftest-item {
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.selftest-item.pass {
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.selftest-item.fail {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.selftest-item span {
+  color: #425466;
+  font-size: 0.78rem;
+}
+
+.button-lab {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-section {
   background: rgba(255, 255, 255, 0.92);
   border-radius: 20px;
@@ -2426,6 +2562,42 @@ textarea {
   padding: 32px;
   max-width: 1400px;
   margin: 0 auto;
+}
+
+.process-source-panel {
+  margin-top: 12px;
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(20, 84, 166, 0.12));
+  border: 1px solid rgba(15, 118, 110, 0.2);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.process-source-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.process-source-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.process-source-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  font-size: 0.82rem;
+}
+
+.process-source-hint {
+  margin: 10px 0 0;
+  color: #334155;
+  font-size: 0.78rem;
 }
 
 .processes-grid {
