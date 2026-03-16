@@ -1869,6 +1869,27 @@ textarea:focus-visible {
   border-color: rgba(24, 35, 50, 0.18);
 }
 
+.btn-text {
+  background: transparent;
+  color: #0f766e;
+  border: 1px dashed rgba(15, 118, 110, 0.3);
+}
+
+.btn-text:hover:not(:disabled) {
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.btn-danger {
+  background: rgba(220, 38, 38, 0.9);
+  color: #fff;
+}
+
+.btn-sm {
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  border-radius: 10px;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1948,6 +1969,18 @@ textarea:focus-visible {
   font-weight: 700;
   letter-spacing: -0.02em;
   color: #182332;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-title-row h2 {
+  margin: 0;
 }
 
 .coverage-summary-grid {
@@ -2155,7 +2188,8 @@ textarea:focus-visible {
   color: #182332;
 }
 
-.activity-lists {
+.activity-lists,
+.activity-list {
   display: flex;
   flex-direction: column;
   gap: 12px;

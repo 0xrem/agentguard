@@ -87,6 +87,8 @@ export function Dashboard({
   actionCards,
 }: DashboardProps) {
   const { t } = useLanguage();
+  const [showRecentActivity, setShowRecentActivity] = useState(false);
+  const [showRecoveredSessions, setShowRecoveredSessions] = useState(false);
   
   const totalEvents = snapshot?.records.length ?? 0;
   const blockedCount = snapshot?.counts.block ?? 0;
@@ -168,6 +170,18 @@ export function Dashboard({
         <p className="mission-control-tip">
           先 Start 拉起运行时，再 Verify 获取最新状态，出现告警后用 Fix 自动修复。
         </p>
+
+        <div className="mission-control-actions" style={{ marginTop: 10 }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleRunRealDemo}
+            disabled={runningDemo || !stackReady}
+          >
+            {runningDemo ? 'Testing...' : 'Quick Test'}
+          </button>
+          <button className="btn btn-text" onClick={onOpenSetup}>Setup</button>
+          <button className="btn btn-text" onClick={onOpenProcesses}>Processes</button>
+        </div>
       </section>
 
       {error ? (
@@ -384,19 +398,28 @@ export function Dashboard({
 
       {recentRecoveries.length > 0 && (
         <div className="section">
-          <h2>最近恢复确认</h2>
-          <div className="activity-list">
-            {recentRecoveries.slice(0, 5).map((item) => (
-              <div key={`recovery-${item.process.pid}-${item.recoveredAt}`} className="activity-item">
-                <div className="activity-icon">🟢</div>
-                <div className="activity-content">
-                  <div className="activity-title">{item.process.name} 已恢复受保护</div>
-                  <div className="activity-subtitle">退化时长 {formatDuration(item.downtimeMs)}</div>
-                </div>
-                <div className="activity-time">{new Date(item.recoveredAt).toLocaleTimeString()}</div>
-              </div>
-            ))}
+          <div className="section-title-row">
+            <h2>最近恢复确认</h2>
+            <button className="btn btn-text btn-sm" onClick={() => setShowRecoveredSessions((v) => !v)}>
+              {showRecoveredSessions ? '收起' : '展开'}
+            </button>
           </div>
+          {showRecoveredSessions ? (
+            <div className="activity-list">
+              {recentRecoveries.slice(0, 5).map((item) => (
+                <div key={`recovery-${item.process.pid}-${item.recoveredAt}`} className="activity-item">
+                  <div className="activity-icon">🟢</div>
+                  <div className="activity-content">
+                    <div className="activity-title">{item.process.name} 已恢复受保护</div>
+                    <div className="activity-subtitle">退化时长 {formatDuration(item.downtimeMs)}</div>
+                  </div>
+                  <div className="activity-time">{new Date(item.recoveredAt).toLocaleTimeString()}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">已隐藏恢复详情，点击展开查看。</div>
+          )}
         </div>
       )}
 
@@ -457,27 +480,36 @@ export function Dashboard({
 
       {/* 最近活动 */}
       <div className="section">
-        <h2>{t.dashboard.recentActivity}</h2>
-        <div className="activity-list">
-          {snapshot?.records && snapshot.records.length > 0 ? (
-            snapshot.records.slice(0, 5).map((record, index) => (
-              <div key={index} className="activity-item">
-                <div className="activity-icon">
-                  {record.decision.action === 'block' ? '🚫' : record.decision.action === 'allow' ? '✅' : '⏳'}
-                </div>
-                <div className="activity-content">
-                  <div className="activity-title">{record.event.agent.name}</div>
-                  <div className="activity-subtitle">{record.event.operation}</div>
-                </div>
-                <div className="activity-time">
-                  {new Date(record.recorded_at_unix_ms).toLocaleTimeString()}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state">{t.dashboard.noRecentActivity}</div>
-          )}
+        <div className="section-title-row">
+          <h2>{t.dashboard.recentActivity}</h2>
+          <button className="btn btn-text btn-sm" onClick={() => setShowRecentActivity((v) => !v)}>
+            {showRecentActivity ? '收起' : '展开'}
+          </button>
         </div>
+        {showRecentActivity ? (
+          <div className="activity-list">
+            {snapshot?.records && snapshot.records.length > 0 ? (
+              snapshot.records.slice(0, 5).map((record, index) => (
+                <div key={index} className="activity-item">
+                  <div className="activity-icon">
+                    {record.decision.action === 'block' ? '🚫' : record.decision.action === 'allow' ? '✅' : '⏳'}
+                  </div>
+                  <div className="activity-content">
+                    <div className="activity-title">{record.event.agent.name}</div>
+                    <div className="activity-subtitle">{record.event.operation}</div>
+                  </div>
+                  <div className="activity-time">
+                    {new Date(record.recorded_at_unix_ms).toLocaleTimeString()}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">{t.dashboard.noRecentActivity}</div>
+            )}
+          </div>
+        ) : (
+          <div className="empty-state">已隐藏活动明细，点击展开查看。</div>
+        )}
       </div>
     </div>
   );
