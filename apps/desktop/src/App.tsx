@@ -52,6 +52,8 @@ import type {
 
 const AUDIT_PAGE_SIZE = 50;
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const COVERAGE_REGRESSION_MIN_MS = 20_000;
+const COVERAGE_REGRESSION_COOLDOWN_MS = 120_000;
 const AUTO_START_STACK_KEY = "agentguard:autoStartStack";
 
 const KNOWN_AGENT_PROCESS_PATTERNS: RegExp[] = [
@@ -81,6 +83,7 @@ interface CoverageRegressionAlert {
   process: RuntimeProcessInfo;
   startedAt: number;
   durationMs: number;
+  severity: "critical" | "warning";
 }
 
 interface CoverageRecoveryEvent {
@@ -212,6 +215,7 @@ export default function App() {
   const processNetworkCacheRef = useRef<Record<number, number>>({});
   const previousCoverageRef = useRef<Record<number, RuntimeProcessInfo["coverageStatus"]>>({});
   const ongoingRegressionRef = useRef<Record<number, { startedAt: number; process: RuntimeProcessInfo }>>({});
+  const regressionCooldownUntilRef = useRef<Record<number, number>>({});
   const [autoStartStack, setAutoStartStack] = useState<boolean>(() => {
     try {
       const raw = window.localStorage.getItem(AUTO_START_STACK_KEY);
@@ -874,10 +878,13 @@ export default function App() {
       const isProtected = process.coverageStatus === "protected";
 
       if (previous === "protected" && !isProtected) {
-        nextOngoing[process.pid] = {
-          startedAt: now,
-          process,
-        };
+        const cooldownUntil = regressionCooldownUntilRef.current[process.pid] ?? 0;
+        if (cooldownUntil <= now) {
+          nextOngoing[process.pid] = {
+            startedAt: now,
+            process,
+          };
+        }
       }
 
       if (isProtected && nextOngoing[process.pid]) {
@@ -887,6 +894,7 @@ export default function App() {
           recoveredAt: now,
           downtimeMs: Math.max(0, now - startedAt),
         });
+        regressionCooldownUntilRef.current[process.pid] = now + COVERAGE_REGRESSION_COOLDOWN_MS;
         delete nextOngoing[process.pid];
       }
 
@@ -912,11 +920,20 @@ export default function App() {
     ongoingRegressionRef.current = nextOngoing;
     setCoverageRegressions(
       Object.values(nextOngoing)
-        .map((item) => ({
-          process: item.process,
-          startedAt: item.startedAt,
-          durationMs: Math.max(0, now - item.startedAt),
-        }))
+        .filter((item) => now - item.startedAt >= COVERAGE_REGRESSION_MIN_MS)
+        .map((item) => {
+          const severity: CoverageRegressionAlert["severity"] =
+            item.process.risk === "high" || item.process.coverageConfidence === "high"
+              ? "critical"
+              : "warning";
+
+          return {
+            process: item.process,
+            startedAt: item.startedAt,
+            durationMs: Math.max(0, now - item.startedAt),
+            severity,
+          };
+        })
         .sort((a, b) => b.durationMs - a.durationMs),
     );
     if (recovered.length > 0) {
@@ -975,7 +992,9 @@ export default function App() {
     }
 
     const unprotected = enrichedAgentProcesses.filter(
-      (process) => process.coverageStatus === "likely_unprotected",
+      (process) =>
+        process.coverageStatus === "likely_unprotected" &&
+        (process.coverageConfidence === "high" || process.risk !== "low"),
     );
     if (unprotected.length > 0) {
       rawAlerts.push({

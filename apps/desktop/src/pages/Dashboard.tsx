@@ -28,7 +28,7 @@ interface DashboardProps {
   runtimeEnvironment: RuntimeEnvironment | null;
   runtimeIssues: string[];
   protectionAlerts: ProtectionAlert[];
-  coverageRegressions: Array<{ process: RuntimeProcessInfo; startedAt: number; durationMs: number }>;
+  coverageRegressions: Array<{ process: RuntimeProcessInfo; startedAt: number; durationMs: number; severity: 'critical' | 'warning' }>;
   recentRecoveries: Array<{ process: RuntimeProcessInfo; recoveredAt: number; downtimeMs: number }>;
   coverageSummary: {
     total: number;
@@ -295,7 +295,7 @@ export function Dashboard({
           <h2>覆盖退化告警</h2>
           <div className="protection-alert-list">
             {coverageRegressions.slice(0, 6).map((item) => (
-              <div key={`coverage-regression-${item.process.pid}`} className="protection-alert warning">
+              <div key={`coverage-regression-${item.process.pid}`} className={`protection-alert ${item.severity}`}>
                 <div className="protection-alert-processes">
                   <span className="protection-process-pill">
                     🔴 {item.process.name} (pid {item.process.pid}) · {item.process.coverageStatus}
@@ -303,8 +303,20 @@ export function Dashboard({
                   <span className="protection-process-pill">
                     持续 {formatDuration(item.durationMs)}
                   </span>
+                  <span className="protection-process-pill">
+                    置信度 {item.process.coverageConfidence} · 评分 {item.process.coverageScore}
+                  </span>
                 </div>
                 <div className="setting-description">{item.process.coverageReason}</div>
+                {item.process.coverageEvidence.length > 0 && (
+                  <div className="protection-alert-processes" style={{ marginTop: 8 }}>
+                    {item.process.coverageEvidence.slice(0, 3).map((evidence, idx) => (
+                      <span key={`${item.process.pid}-evidence-${idx}`} className="protection-process-pill">
+                        {evidence.label}: {evidence.value} ({evidence.weight > 0 ? `+${evidence.weight}` : evidence.weight})
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             <div className="protection-batch-actions">

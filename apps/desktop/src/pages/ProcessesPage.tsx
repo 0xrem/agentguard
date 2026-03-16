@@ -531,7 +531,7 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
                   </div>
                   <div className="detail-row">
                     <span className="detail-label">Confidence:</span>
-                    <span className="detail-value">{selectedProcess.coverageConfidence}</span>
+                    <span className="detail-value">{selectedProcess.coverageConfidence} (score {selectedProcess.coverageScore})</span>
                   </div>
                   <div className="detail-row">
                     <span className="detail-label">Last Event:</span>
@@ -546,6 +546,15 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
                     <span className="detail-value">{selectedProcess.coverageReason}</span>
                   </div>
                 </div>
+                {selectedProcess.coverageEvidence.length > 0 && (
+                  <div className="protection-alert-processes" style={{ marginTop: 10 }}>
+                    {selectedProcess.coverageEvidence.map((evidence, idx) => (
+                      <span key={`coverage-evidence-${idx}`} className="protection-process-pill">
+                        {evidence.label}: {evidence.value} ({evidence.weight > 0 ? `+${evidence.weight}` : evidence.weight})
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {selectedProcess.coverageStatus !== 'protected' && (

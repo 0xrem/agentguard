@@ -113,6 +113,8 @@ export interface RuntimeProcessInfo {
   coverageStatus: "protected" | "likely_unprotected" | "unknown";
   coverageReason: string;
   coverageConfidence: "high" | "medium" | "low";
+  coverageScore: number;
+  coverageEvidence: CoverageEvidence[];
   lastEventAtUnixMs: number | null;
   cpu: number;
   memory: number;
@@ -124,6 +126,13 @@ export interface RuntimeProcessInfo {
   user: string;
   threads: number;
   openFiles: number;
+}
+
+export interface CoverageEvidence {
+  kind: "audit_link" | "agent_signature" | "runtime_signal";
+  label: string;
+  value: string;
+  weight: number;
 }
 
 export interface RuleTemplate {

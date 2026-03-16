@@ -152,6 +152,10 @@ struct RuntimeProcessInfo {
     coverage_reason: String,
     #[serde(rename = "coverageConfidence")]
     coverage_confidence: String,
+    #[serde(rename = "coverageScore")]
+    coverage_score: u8,
+    #[serde(rename = "coverageEvidence")]
+    coverage_evidence: Vec<CoverageEvidence>,
     #[serde(rename = "lastEventAtUnixMs")]
     last_event_at_unix_ms: Option<i64>,
     cpu: f32,
@@ -166,6 +170,24 @@ struct RuntimeProcessInfo {
     threads: u32,
     #[serde(rename = "openFiles")]
     open_files: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct CoverageEvidence {
+    kind: String,
+    label: String,
+    value: String,
+    weight: i32,
+}
+
+#[derive(Debug)]
+struct CoverageAssessment {
+    status: String,
+    reason: String,
+    confidence: String,
+    score: u8,
+    evidence: Vec<CoverageEvidence>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -734,7 +756,7 @@ async fn list_runtime_processes(
 
         let events = event_count_by_pid.get(&pid).copied().unwrap_or(0);
         let last_event_at = last_event_at_by_pid.get(&pid).copied();
-        let (coverage_status, coverage_reason, coverage_confidence) = classify_process_coverage(
+        let coverage = classify_process_coverage(
             &name,
             &command,
             events,
@@ -747,9 +769,11 @@ async fn list_runtime_processes(
             name,
             risk: classify_process_risk(&command, cpu, rss_kb / 1024.0).into(),
             status: map_ps_state(state),
-            coverage_status,
-            coverage_reason,
-            coverage_confidence,
+            coverage_status: coverage.status,
+            coverage_reason: coverage.reason,
+            coverage_confidence: coverage.confidence,
+            coverage_score: coverage.score,
+            coverage_evidence: coverage.evidence,
             last_event_at_unix_ms: last_event_at,
             cpu,
             memory: rss_kb / 1024.0,
@@ -964,34 +988,81 @@ fn classify_process_coverage(
     events: u32,
     last_event_at_unix_ms: Option<i64>,
     now_unix_ms: i64,
-) -> (String, String, String) {
+) -> CoverageAssessment {
+    let mut evidence: Vec<CoverageEvidence> = Vec::new();
+
+    if is_likely_agent_process(name, command) {
+        evidence.push(CoverageEvidence {
+            kind: "agent_signature".into(),
+            label: "Agent Signature".into(),
+            value: format!("{} {}", name, command),
+            weight: 35,
+        });
+    }
+
+    evidence.push(CoverageEvidence {
+        kind: "runtime_signal".into(),
+        label: "Observed Events".into(),
+        value: events.to_string(),
+        weight: if events > 0 { 55 } else { -20 },
+    });
+
     if events > 0 {
         let age_text = last_event_at_unix_ms
             .map(|ts| format_relative_age(now_unix_ms.saturating_sub(ts)))
             .unwrap_or_else(|| "recently".into());
-        return (
-            "protected".into(),
-            format!(
+
+        evidence.push(CoverageEvidence {
+            kind: "audit_link".into(),
+            label: "Last Audit Link".into(),
+            value: age_text.clone(),
+            weight: 30,
+        });
+
+        return CoverageAssessment {
+            status: "protected".into(),
+            reason: format!(
                 "Observed {events} audited event(s); most recent event {age_text} ago.",
             ),
-            "high".into(),
-        );
+            confidence: "high".into(),
+            score: 88,
+            evidence,
+        };
     }
 
     if is_likely_agent_process(name, command) {
-        return (
-            "likely_unprotected".into(),
-            "Agent-like process detected but no audited events were linked in the recent window."
-                .into(),
-            "medium".into(),
-        );
+        evidence.push(CoverageEvidence {
+            kind: "audit_link".into(),
+            label: "Audit Link".into(),
+            value: "none in recent window".into(),
+            weight: -35,
+        });
+
+        return CoverageAssessment {
+            status: "likely_unprotected".into(),
+            reason:
+                "Agent-like process detected but no audited events were linked in the recent window."
+                    .into(),
+            confidence: "medium".into(),
+            score: 42,
+            evidence,
+        };
     }
 
-    (
-        "unknown".into(),
-        "No recent audit linkage and process does not strongly match known agent signatures.".into(),
-        "low".into(),
-    )
+    evidence.push(CoverageEvidence {
+        kind: "audit_link".into(),
+        label: "Audit Link".into(),
+        value: "none".into(),
+        weight: -20,
+    });
+
+    CoverageAssessment {
+        status: "unknown".into(),
+        reason: "No recent audit linkage and process does not strongly match known agent signatures.".into(),
+        confidence: "low".into(),
+        score: 25,
+        evidence,
+    }
 }
 
 fn is_likely_agent_process(name: &str, command: &str) -> bool {
