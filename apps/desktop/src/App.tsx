@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import {
   deletePolicyRule,
   exportRules,
@@ -186,6 +186,7 @@ export default function App() {
   const [lastProtectionFix, setLastProtectionFix] = useState<ProtectionFixResult | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dataRetentionDays, setDataRetentionDays] = useState(30);
+  const processNetworkCacheRef = useRef<Record<number, number>>({});
   const [autoStartStack, setAutoStartStack] = useState<boolean>(() => {
     try {
       const raw = window.localStorage.getItem(AUTO_START_STACK_KEY);
@@ -272,7 +273,7 @@ export default function App() {
       startTransition(() => {
         setSnapshot(nextSnapshot);
         setRuntimeEnvironment(nextRuntimeEnvironment);
-        setProcesses(nextProcesses);
+        setProcesses(smoothRuntimeProcesses(nextProcesses, processNetworkCacheRef.current));
       });
     } catch (refreshError) {
       setError(getErrorMessage(refreshError));
@@ -351,7 +352,7 @@ export default function App() {
     setProcessesLoading(true);
     try {
       const next = await loadProcesses(120);
-      setProcesses(next);
+      setProcesses(smoothRuntimeProcesses(next, processNetworkCacheRef.current));
       setError(null);
     } catch (processError) {
       setError(getErrorMessage(processError));
@@ -1447,4 +1448,32 @@ function buildProtectionAlertId(alert: {
 
 function riskWeight(risk: "high" | "medium" | "low"): number {
   return risk === "high" ? 3 : risk === "medium" ? 2 : 1;
+}
+
+function smoothRuntimeProcesses(
+  nextProcesses: RuntimeProcessInfo[],
+  cache: Record<number, number>,
+): RuntimeProcessInfo[] {
+  const nextCache: Record<number, number> = {};
+  const smoothed = nextProcesses.map((process) => {
+    const previous = cache[process.pid];
+    let network = process.network;
+
+    if (process.networkSource === "nettop_delta" && typeof previous === "number") {
+      network = Math.round(previous * 0.65 + process.network * 0.35);
+    }
+
+    nextCache[process.pid] = network;
+    return {
+      ...process,
+      network,
+    };
+  });
+
+  Object.keys(cache).forEach((key) => {
+    delete cache[Number(key)];
+  });
+  Object.assign(cache, nextCache);
+
+  return smoothed;
 }

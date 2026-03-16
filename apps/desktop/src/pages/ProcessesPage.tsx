@@ -39,6 +39,32 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
     setShowDetails(true);
   };
 
+  const formatNetworkValue = (process: RuntimeProcessInfo) => {
+    if (process.networkSource === 'nettop_delta') {
+      return `${process.network} KB/s`;
+    }
+    if (process.networkSource === 'lsof_sockets') {
+      return `${process.network} sockets`;
+    }
+    return '-';
+  };
+
+  const networkFillPercent = (process: RuntimeProcessInfo) => {
+    if (process.networkSource === 'nettop_delta') {
+      return Math.min(100, process.network / 50);
+    }
+    if (process.networkSource === 'lsof_sockets') {
+      return Math.min(100, process.network / 20);
+    }
+    return 0;
+  };
+
+  const networkSourceLabel = (source: RuntimeProcessInfo['networkSource']) => {
+    if (source === 'nettop_delta') return 'Source: nettop delta (~1s)';
+    if (source === 'lsof_sockets') return 'Source: lsof socket count';
+    return 'Source: unavailable';
+  };
+
   if (loading) {
     return (
       <div className="processes-page">
@@ -105,10 +131,10 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                 <div className="metric-bar">
                   <div 
                     className="metric-fill network"
-                    style={{ width: `${Math.min(100, process.network / 50)}%` }}
+                    style={{ width: `${networkFillPercent(process)}%` }}
                   ></div>
                 </div>
-                <div className="metric-value">{process.network} KB/s</div>
+                <div className="metric-value">{formatNetworkValue(process)}</div>
               </div>
             </div>
 
@@ -188,7 +214,7 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                   </div>
                   <div className="resource-card">
                     <div className="resource-icon">🌐</div>
-                    <div className="resource-value">{selectedProcess.network} KB/s</div>
+                    <div className="resource-value">{formatNetworkValue(selectedProcess)}</div>
                     <div className="resource-label">Network</div>
                   </div>
                   <div className="resource-card">
@@ -197,6 +223,11 @@ export function ProcessesPage({ loading, processes, onRefresh }: ProcessesPagePr
                     <div className="resource-label">Open Files</div>
                   </div>
                 </div>
+              </div>
+
+              <div className="detail-section">
+                <h3>Network Source</h3>
+                <div className="setting-description">{networkSourceLabel(selectedProcess.networkSource)}</div>
               </div>
 
               <div className="detail-section">

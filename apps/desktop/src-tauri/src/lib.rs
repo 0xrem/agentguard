@@ -128,6 +128,8 @@ struct RuntimeProcessInfo {
     cpu: f32,
     memory: f32,
     network: u64,
+    #[serde(rename = "networkSource")]
+    network_source: String,
     events: u32,
     uptime: u64,
     command: String,
@@ -531,6 +533,7 @@ async fn list_runtime_processes(
             cpu,
             memory: rss_kb / 1024.0,
             network: 0,
+            network_source: "unknown".into(),
             events: event_count_by_pid.get(&pid).copied().unwrap_or(0),
             uptime,
             command,
@@ -552,12 +555,18 @@ async fn list_runtime_processes(
     let network_kbps_by_pid = collect_network_kbps_by_pid();
 
     for process in &mut processes {
-        let open_files = collect_process_open_file_count(process.pid);
+        let (open_files, lsof_sockets) = collect_process_lsof_counts(process.pid);
         process.open_files = open_files;
-        process.network = network_kbps_by_pid
-            .get(&process.pid)
-            .copied()
-            .unwrap_or(0);
+        if let Some(kbps) = network_kbps_by_pid.get(&process.pid).copied() {
+            process.network = kbps;
+            process.network_source = "nettop_delta".into();
+        } else if lsof_sockets > 0 {
+            process.network = lsof_sockets;
+            process.network_source = "lsof_sockets".into();
+        } else {
+            process.network = 0;
+            process.network_source = "unknown".into();
+        }
     }
 
     Ok(processes)
@@ -616,17 +625,34 @@ fn parse_nettop_proc_pid(proc_field: &str) -> Option<u32> {
     pid_text.trim().parse::<u32>().ok()
 }
 
-fn collect_process_open_file_count(pid: u32) -> u32 {
+fn collect_process_lsof_counts(pid: u32) -> (u32, u64) {
     let pid_string = pid.to_string();
 
-    Command::new("lsof")
+    let output = Command::new("lsof")
         .args(["-nP", "-p", pid_string.as_str()])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|stdout| stdout.lines().skip(1).count() as u32)
-        .unwrap_or(0)
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+
+    let Some(stdout) = output else {
+        return (0, 0);
+    };
+
+    let mut open_files: u32 = 0;
+    let mut sockets: u64 = 0;
+    for line in stdout.lines().skip(1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        open_files = open_files.saturating_add(1);
+        let uppercase = line.to_ascii_uppercase();
+        if uppercase.contains(" TCP ") || uppercase.contains(" UDP ") {
+            sockets = sockets.saturating_add(1);
+        }
+    }
+
+    (open_files, sockets)
 }
 
 fn map_ps_state(state: &str) -> String {

@@ -113,6 +113,7 @@ export interface RuntimeProcessInfo {
   cpu: number;
   memory: number;
   network: number;
+  networkSource: "nettop_delta" | "lsof_sockets" | "unknown";
   events: number;
   uptime: number;
   command: string;
