@@ -2429,6 +2429,58 @@ textarea {
   color: #1f2d3d;
 }
 
+.regression-panel {
+  margin-top: 12px;
+  background: rgba(255, 250, 245, 0.95);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.regression-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #9f1239;
+  margin-bottom: 8px;
+}
+
+.regression-list {
+  display: grid;
+  gap: 8px;
+}
+
+.regression-item {
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  background: rgba(255, 244, 236, 0.95);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-snippets {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.command-snippet {
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.command-snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .overview-card {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(24, 35, 50, 0.08);

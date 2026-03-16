@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLanguage } from '../i18n';
 import type { RuntimeProcessInfo } from '../types';
 
@@ -16,6 +16,9 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
   const [showOnlyAgents, setShowOnlyAgents] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [riskFilter, setRiskFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const [regressions, setRegressions] = useState<RuntimeProcessInfo[]>([]);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const previousCoverageRef = useRef<Record<number, RuntimeProcessInfo['coverageStatus']>>({});
 
   const AGENT_PATTERNS = [/claude/i, /cursor/i, /aider/i, /autogpt/i, /copilot/i, /codex/i, /agent/i, /langchain/i, /llamaindex/i];
 
@@ -134,6 +137,23 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
     return { active1h, active24h, newAgents1h, highRiskUnprotected };
   }, [likelyAgentProcesses]);
 
+  useEffect(() => {
+    const nextMap: Record<number, RuntimeProcessInfo['coverageStatus']> = {};
+    const degraded: RuntimeProcessInfo[] = [];
+
+    for (const process of likelyAgentProcesses) {
+      const previous = previousCoverageRef.current[process.pid];
+      const current = process.coverageStatus;
+      if (previous === 'protected' && current !== 'protected') {
+        degraded.push(process);
+      }
+      nextMap[process.pid] = current;
+    }
+
+    previousCoverageRef.current = nextMap;
+    setRegressions(degraded);
+  }, [likelyAgentProcesses]);
+
   const getSetupGuidance = (process: RuntimeProcessInfo) => {
     const text = `${process.name} ${process.command}`.toLowerCase();
     if (text.includes('claude')) {
@@ -175,6 +195,53 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
         '回到进程页刷新，确认覆盖状态变为 Protected。',
       ],
     };
+  };
+
+  const getSetupCommands = (process: RuntimeProcessInfo) => {
+    const text = `${process.name} ${process.command}`.toLowerCase();
+    if (text.includes('claude')) {
+      return [
+        {
+          label: 'Claude Code',
+          command: 'export OPENAI_BASE_URL=http://127.0.0.1:8787/v1\nexport OPENAI_API_KEY=agentguard-local\nclaude',
+        },
+      ];
+    }
+    if (text.includes('cursor')) {
+      return [
+        {
+          label: 'Cursor',
+          command: 'export OPENAI_BASE_URL=http://127.0.0.1:8787/v1\nexport OPENAI_API_KEY=agentguard-local\ncursor .',
+        },
+      ];
+    }
+    if (text.includes('python') || text.includes('aider') || text.includes('langchain') || text.includes('llamaindex')) {
+      return [
+        {
+          label: 'Python Agent',
+          command: 'export AGENTGUARD_DAEMON_URL=http://127.0.0.1:8790\nexport OPENAI_BASE_URL=http://127.0.0.1:8787/v1\npython your_agent.py',
+        },
+      ];
+    }
+
+    return [
+      {
+        label: 'Generic Proxy Mode',
+        command: 'export OPENAI_BASE_URL=http://127.0.0.1:8787/v1\nexport OPENAI_API_KEY=agentguard-local',
+      },
+    ];
+  };
+
+  const copyCommand = async (command: string) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+        setCopiedCommand(command);
+        window.setTimeout(() => setCopiedCommand(null), 1200);
+      }
+    } catch {
+      // noop: clipboard support is optional for desktop web preview.
+    }
   };
 
   if (loading) {
@@ -239,6 +306,21 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
           <div className="trend-value">{trend.highRiskUnprotected}</div>
         </div>
       </div>
+
+      {regressions.length > 0 && (
+        <div className="regression-panel">
+          <div className="regression-title">覆盖状态退化告警（刚从 Protected 退化）</div>
+          <div className="regression-list">
+            {regressions.map((process) => (
+              <button key={`regression-${process.pid}`} className="regression-item" onClick={() => handleViewDetails(process)}>
+                <span className={`risk-chip ${process.risk}`}>{process.risk.toUpperCase()}</span>
+                <span className="urgent-name">{process.name}</span>
+                <span className="urgent-meta">PID {process.pid} · {process.coverageStatus}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {overview.urgentUnprotected.length > 0 && (
         <div className="urgent-panel">
@@ -474,6 +556,19 @@ export function ProcessesPage({ loading, processes, onRefresh, onOpenSetup }: Pr
                       <li key={step}>{step}</li>
                     ))}
                   </ol>
+                  <div className="command-snippets">
+                    {getSetupCommands(selectedProcess).map((item) => (
+                      <div className="command-snippet" key={item.label}>
+                        <div className="command-snippet-header">
+                          <strong>{item.label}</strong>
+                          <button className="btn btn-secondary btn-sm" onClick={() => copyCommand(item.command)}>
+                            {copiedCommand === item.command ? '已复制' : '复制命令'}
+                          </button>
+                        </div>
+                        <pre className="metadata-json">{item.command}</pre>
+                      </div>
+                    ))}
+                  </div>
                   <div className="page-actions">
                     <button className="btn btn-primary" onClick={onOpenSetup}>前往快速接入</button>
                   </div>
