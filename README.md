@@ -103,22 +103,39 @@ It is not trying to be:
 
 If an agent can touch your machine, your data, or your credentials, AgentGuard is relevant.
 
+## Current Status
+
+Use these files as the maintained documentation set:
+
+- docs/STATUS.md: current source of truth for what is real, partial, and missing
+- docs/REALITY_CHECKLIST.md: how to verify the product is using real runtime data
+- docs/ROADMAP.md: direction, priorities, and remaining gaps
+- docs/architecture.md: system boundaries and implementation guardrails
+
+As of 2026-03-16, the daemon, proxy, desktop app, Python SDK live path, setup wizard, audit flow, process monitoring, and protection alerts are real and runnable locally.
+The main remaining gaps are deeper coverage, direct framework integrations, and demo reliability hardening.
+
 ## Quickstart
 
-The shortest local path is now:
+The shortest local path to see the current product is:
 
 ```bash
 pnpm bootstrap:local
 pnpm stack:up
-pnpm demo:live
-pnpm desktop:build
+pnpm desktop:dev
+pnpm verify:reality
 ```
 
 What each command does:
 
 - `pnpm bootstrap:local`: installs JavaScript dependencies, installs the Python SDK in editable mode, and builds the local daemon and proxy binaries
 - `pnpm stack:up`: starts the local daemon and proxy on `http://127.0.0.1:8790` and `http://127.0.0.1:8787`
-- `pnpm demo:live`: runs a real SDK-backed approval demo against that local stack
+- `pnpm desktop:dev`: launches the Tauri desktop app in development mode
+- `pnpm verify:reality`: runs the live demo and validates that fresh audit records come from the real daemon path instead of browser preview mocks
+
+Useful additional commands:
+
+- `pnpm demo:live`: runs the real SDK-backed approval demo directly
 - `pnpm desktop:build`: on macOS, produces the desktop app bundle under `target/release/bundle/macos/AgentGuard.app`
 
 If you already have `OPENAI_API_KEY` set, the live demo uses the proxy-backed OpenAI-compatible path.
@@ -191,25 +208,21 @@ Success means:
 
 ## Roadmap
 
-1. `MVP`
-   - Command monitoring and blacklist-based blocking
-   - Basic approval dialogs
-   - Minimal rules engine
-   - Audit log
-2. `Beta`
-   - Local prompt proxy
-   - Python and Node.js wrappers
-   - Dashboard
-   - More granular rules and trust levels
-3. `Production`
-   - richer system-level monitoring
-   - rule updates and sharing
-   - stronger privacy sandboxing
-   - team and commercial features
+The maintained roadmap lives in docs/ROADMAP.md.
+
+Short version:
+
+1. firewall UX first: setup, visibility, approvals, alerts
+2. prove real protection coverage on active agent sessions
+3. expand direct framework coverage before deeper platform hooks
+4. add stronger system-level interception later, not as the MVP dependency
 
 ## Project Status
 
-AgentGuard is early. This repository is the foundation for the product vision, threat model, and first implementation milestones.
+AgentGuard is still early, but it is no longer just a mock desktop shell.
+
+The current repository already supports a real local stack, real audit records, real approval flow, and a runnable desktop control room.
+For the maintained status snapshot, use docs/STATUS.md instead of older session summaries or release notes.
 
 Current end-to-end proof:
 
