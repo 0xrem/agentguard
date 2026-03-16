@@ -28,7 +28,15 @@ interface DashboardProps {
   runtimeEnvironment: RuntimeEnvironment | null;
   runtimeIssues: string[];
   protectionAlerts: ProtectionAlert[];
-  coverageRegressions: RuntimeProcessInfo[];
+  coverageRegressions: Array<{ process: RuntimeProcessInfo; startedAt: number; durationMs: number }>;
+  recentRecoveries: Array<{ process: RuntimeProcessInfo; recoveredAt: number; downtimeMs: number }>;
+  coverageSummary: {
+    total: number;
+    protectedCount: number;
+    likelyUnprotectedCount: number;
+    unknownCount: number;
+    highRiskUnprotected: number;
+  };
   lastProtectionFix: ProtectionFixResult | null;
   onDismissProtectionAlert: (id: string) => void;
   onDismissProtectionWarnings: () => void;
@@ -60,6 +68,8 @@ export function Dashboard({
   runtimeIssues,
   protectionAlerts,
   coverageRegressions,
+  recentRecoveries,
+  coverageSummary,
   lastProtectionFix,
   onDismissProtectionAlert,
   onDismissProtectionWarnings,
@@ -94,6 +104,17 @@ export function Dashboard({
 
   const isDaemonRunning = runtimeEnvironment?.daemon_source !== null;
   const isProxyRunning = runtimeEnvironment?.proxy_source !== null;
+
+  const formatDuration = (ms: number) => {
+    const secs = Math.floor(ms / 1000);
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ${mins % 60}m`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+  };
 
   return (
     <div className="dashboard-page">
@@ -243,18 +264,47 @@ export function Dashboard({
         </div>
       </div>
 
+      <div className="section">
+        <h2>Agent 覆盖总览</h2>
+        <div className="coverage-summary-grid">
+          <div className="coverage-summary-card">
+            <span>总 Agent</span>
+            <strong>{coverageSummary.total}</strong>
+          </div>
+          <div className="coverage-summary-card success">
+            <span>已保护</span>
+            <strong>{coverageSummary.protectedCount}</strong>
+          </div>
+          <div className="coverage-summary-card warning">
+            <span>疑似未保护</span>
+            <strong>{coverageSummary.likelyUnprotectedCount}</strong>
+          </div>
+          <div className="coverage-summary-card muted">
+            <span>未知</span>
+            <strong>{coverageSummary.unknownCount}</strong>
+          </div>
+          <div className="coverage-summary-card danger">
+            <span>高风险未保护</span>
+            <strong>{coverageSummary.highRiskUnprotected}</strong>
+          </div>
+        </div>
+      </div>
+
       {coverageRegressions.length > 0 && (
         <div className="section">
           <h2>覆盖退化告警</h2>
           <div className="protection-alert-list">
-            {coverageRegressions.slice(0, 6).map((process) => (
-              <div key={`coverage-regression-${process.pid}`} className="protection-alert warning">
+            {coverageRegressions.slice(0, 6).map((item) => (
+              <div key={`coverage-regression-${item.process.pid}`} className="protection-alert warning">
                 <div className="protection-alert-processes">
                   <span className="protection-process-pill">
-                    🔴 {process.name} (pid {process.pid}) · {process.coverageStatus}
+                    🔴 {item.process.name} (pid {item.process.pid}) · {item.process.coverageStatus}
+                  </span>
+                  <span className="protection-process-pill">
+                    持续 {formatDuration(item.durationMs)}
                   </span>
                 </div>
-                <div className="setting-description">{process.coverageReason}</div>
+                <div className="setting-description">{item.process.coverageReason}</div>
               </div>
             ))}
             <div className="protection-batch-actions">
@@ -265,6 +315,24 @@ export function Dashboard({
                 去快速接入
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {recentRecoveries.length > 0 && (
+        <div className="section">
+          <h2>最近恢复确认</h2>
+          <div className="activity-list">
+            {recentRecoveries.slice(0, 5).map((item) => (
+              <div key={`recovery-${item.process.pid}-${item.recoveredAt}`} className="activity-item">
+                <div className="activity-icon">🟢</div>
+                <div className="activity-content">
+                  <div className="activity-title">{item.process.name} 已恢复受保护</div>
+                  <div className="activity-subtitle">退化时长 {formatDuration(item.downtimeMs)}</div>
+                </div>
+                <div className="activity-time">{new Date(item.recoveredAt).toLocaleTimeString()}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}

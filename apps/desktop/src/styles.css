@@ -1835,6 +1835,49 @@ textarea {
   color: #182332;
 }
 
+.coverage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.coverage-summary-card {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(24, 35, 50, 0.08);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.coverage-summary-card span {
+  font-size: 0.8rem;
+  color: #607084;
+}
+
+.coverage-summary-card strong {
+  font-size: 1.5rem;
+  color: #182332;
+  line-height: 1;
+}
+
+.coverage-summary-card.success {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.coverage-summary-card.warning {
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.coverage-summary-card.muted {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.coverage-summary-card.danger {
+  background: rgba(239, 68, 68, 0.12);
+}
+
 .runtime-status {
   display: flex;
   gap: 24px;

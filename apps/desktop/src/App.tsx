@@ -77,6 +77,18 @@ interface ProtectionFixResult {
   at: number;
 }
 
+interface CoverageRegressionAlert {
+  process: RuntimeProcessInfo;
+  startedAt: number;
+  durationMs: number;
+}
+
+interface CoverageRecoveryEvent {
+  process: RuntimeProcessInfo;
+  recoveredAt: number;
+  downtimeMs: number;
+}
+
 const SAMPLE_SCENARIOS: Array<{
   kind: SampleEventKind;
   title: string;
@@ -190,7 +202,8 @@ export default function App() {
   });
   const [darkMode, setDarkMode] = useState(false);
   const [processes, setProcesses] = useState<RuntimeProcessInfo[]>([]);
-  const [coverageRegressions, setCoverageRegressions] = useState<RuntimeProcessInfo[]>([]);
+  const [coverageRegressions, setCoverageRegressions] = useState<CoverageRegressionAlert[]>([]);
+  const [recentRecoveries, setRecentRecoveries] = useState<CoverageRecoveryEvent[]>([]);
   const [processesLoading, setProcessesLoading] = useState(false);
   const [alertCooldownUntil, setAlertCooldownUntil] = useState<Record<string, number>>({});
   const [lastProtectionFix, setLastProtectionFix] = useState<ProtectionFixResult | null>(null);
@@ -198,6 +211,7 @@ export default function App() {
   const [dataRetentionDays, setDataRetentionDays] = useState(30);
   const processNetworkCacheRef = useRef<Record<number, number>>({});
   const previousCoverageRef = useRef<Record<number, RuntimeProcessInfo["coverageStatus"]>>({});
+  const ongoingRegressionRef = useRef<Record<number, { startedAt: number; process: RuntimeProcessInfo }>>({});
   const [autoStartStack, setAutoStartStack] = useState<boolean>(() => {
     try {
       const raw = window.localStorage.getItem(AUTO_START_STACK_KEY);
@@ -850,19 +864,86 @@ export default function App() {
   );
 
   useEffect(() => {
+    const now = Date.now();
     const nextMap: Record<number, RuntimeProcessInfo["coverageStatus"]> = {};
-    const degraded: RuntimeProcessInfo[] = [];
+    const nextOngoing = { ...ongoingRegressionRef.current };
+    const recovered: CoverageRecoveryEvent[] = [];
 
     for (const process of likelyAgentProcesses) {
       const previous = previousCoverageRef.current[process.pid];
-      if (previous === "protected" && process.coverageStatus !== "protected") {
-        degraded.push(process);
+      const isProtected = process.coverageStatus === "protected";
+
+      if (previous === "protected" && !isProtected) {
+        nextOngoing[process.pid] = {
+          startedAt: now,
+          process,
+        };
       }
+
+      if (isProtected && nextOngoing[process.pid]) {
+        const startedAt = nextOngoing[process.pid].startedAt;
+        recovered.push({
+          process,
+          recoveredAt: now,
+          downtimeMs: Math.max(0, now - startedAt),
+        });
+        delete nextOngoing[process.pid];
+      }
+
+      if (!isProtected && nextOngoing[process.pid]) {
+        nextOngoing[process.pid] = {
+          ...nextOngoing[process.pid],
+          process,
+        };
+      }
+
       nextMap[process.pid] = process.coverageStatus;
     }
 
+    for (const pidText of Object.keys(nextOngoing)) {
+      const pid = Number(pidText);
+      const stillPresent = likelyAgentProcesses.some((process) => process.pid === pid);
+      if (!stillPresent) {
+        delete nextOngoing[pid];
+      }
+    }
+
     previousCoverageRef.current = nextMap;
-    setCoverageRegressions(degraded);
+    ongoingRegressionRef.current = nextOngoing;
+    setCoverageRegressions(
+      Object.values(nextOngoing)
+        .map((item) => ({
+          process: item.process,
+          startedAt: item.startedAt,
+          durationMs: Math.max(0, now - item.startedAt),
+        }))
+        .sort((a, b) => b.durationMs - a.durationMs),
+    );
+    if (recovered.length > 0) {
+      setRecentRecoveries((prev) =>
+        [...recovered, ...prev]
+          .sort((a, b) => b.recoveredAt - a.recoveredAt)
+          .slice(0, 12),
+      );
+    }
+  }, [likelyAgentProcesses]);
+
+  const coverageSummary = useMemo(() => {
+    const total = likelyAgentProcesses.length;
+    const protectedCount = likelyAgentProcesses.filter((process) => process.coverageStatus === "protected").length;
+    const likelyUnprotectedCount = likelyAgentProcesses.filter((process) => process.coverageStatus === "likely_unprotected").length;
+    const unknownCount = likelyAgentProcesses.filter((process) => process.coverageStatus === "unknown").length;
+    const highRiskUnprotected = likelyAgentProcesses.filter(
+      (process) => process.risk === "high" && process.coverageStatus !== "protected",
+    ).length;
+
+    return {
+      total,
+      protectedCount,
+      likelyUnprotectedCount,
+      unknownCount,
+      highRiskUnprotected,
+    };
   }, [likelyAgentProcesses]);
 
   const protectionAlerts = useMemo<ProtectionAlert[]>(() => {
@@ -954,6 +1035,8 @@ export default function App() {
           runtimeIssues={runtimeIssues}
           protectionAlerts={protectionAlerts}
           coverageRegressions={coverageRegressions}
+          recentRecoveries={recentRecoveries}
+          coverageSummary={coverageSummary}
           lastProtectionFix={lastProtectionFix}
           onDismissProtectionAlert={dismissProtectionAlert}
           onDismissProtectionWarnings={() => dismissProtectionAlertsBySeverity("warning")}
