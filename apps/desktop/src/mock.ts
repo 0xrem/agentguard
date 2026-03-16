@@ -2,6 +2,9 @@ import type {
   ApprovalRequest,
   ApprovalStatus,
   AuditRecord,
+  AuditReview,
+  AuditReviewQuery,
+  AuditReviewUpdate,
   AuditQuery,
   AuditStats,
   DashboardSnapshot,
@@ -110,6 +113,7 @@ const previewRecords: AuditRecord[] = [
 ];
 
 const previewPendingApprovals: ApprovalRequest[] = [];
+const previewAuditReviews = new Map<number, AuditReview>();
 const previewRememberedRules: ManagedRule[] = [
   createManagedRule({
     id: "remembered-preview-review-upload",
@@ -364,6 +368,36 @@ export function mockGetAuditStats(_since?: number): AuditStats {
 
 export function mockDetectRuleConflicts(): RuleConflict[] {
   return [];
+}
+
+export function mockQueryAuditReviews(query: AuditReviewQuery): AuditReview[] {
+  let reviews = Array.from(previewAuditReviews.values());
+
+  if (query.record_ids && query.record_ids.length > 0) {
+    const allow = new Set(query.record_ids);
+    reviews = reviews.filter((item) => allow.has(item.audit_record_id));
+  }
+
+  if (query.status) {
+    reviews = reviews.filter((item) => item.status === query.status);
+  }
+
+  const offset = query.offset ?? 0;
+  const limit = query.limit ?? reviews.length;
+  return reviews.slice(offset, offset + limit);
+}
+
+export function mockUpdateAuditReview(auditRecordId: number, review: AuditReviewUpdate): AuditReview {
+  const value: AuditReview = {
+    audit_record_id: auditRecordId,
+    status: review.status,
+    label: review.label ?? null,
+    note: review.note ?? null,
+    reviewed_by: review.reviewed_by ?? "preview-user",
+    updated_at_unix_ms: Date.now(),
+  };
+  previewAuditReviews.set(auditRecordId, value);
+  return value;
 }
 
 export function mockQueryAuditLogs(query: AuditQuery): AuditRecord[] {

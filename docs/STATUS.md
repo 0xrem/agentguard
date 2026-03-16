@@ -58,7 +58,6 @@ These capabilities exist but are not yet production-strong:
 - first-class direct integrations for Claude Code, Cursor, LangChain, LlamaIndex
 - Node browser wrapper
 - Node OpenAI Agents SDK integration
-- rule conflict detection
 - stronger audit workflow features such as false-positive labeling and review state
 
 ## Current Validation Commands
@@ -81,7 +80,7 @@ See docs/REALITY_CHECKLIST.md for the manual verification checklist.
 3. More direct framework coverage:
    Claude Code and Cursor first
 4. Policy UX hardening:
-   rule conflict detection and review workflow improvements
+  audit review workflow (false-positive label + review status)
 
 ## Collaboration Rule
 

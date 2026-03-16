@@ -13,10 +13,15 @@ import {
   mockSubmitSampleEvent,
   mockGetAuditStats,
   mockDetectRuleConflicts,
+  mockQueryAuditReviews,
+  mockUpdateAuditReview,
 } from "./mock";
 import type {
   ApprovalRequest,
   AuditRecord,
+  AuditReview,
+  AuditReviewQuery,
+  AuditReviewUpdate,
   AuditQuery,
   AuditStats,
   DashboardSnapshot,
@@ -169,6 +174,28 @@ export async function detectRuleConflicts(): Promise<RuleConflict[]> {
   }
 
   return invoke<RuleConflict[]>("detect_rule_conflicts");
+}
+
+export async function queryAuditReviews(query: AuditReviewQuery): Promise<AuditReview[]> {
+  if (!isTauriRuntime()) {
+    return mockQueryAuditReviews(query);
+  }
+
+  return invoke<AuditReview[]>("query_audit_reviews", { query });
+}
+
+export async function updateAuditReview(
+  auditRecordId: number,
+  review: AuditReviewUpdate,
+): Promise<AuditReview> {
+  if (!isTauriRuntime()) {
+    return mockUpdateAuditReview(auditRecordId, review);
+  }
+
+  return invoke<AuditReview>("update_audit_review", {
+    auditRecordId,
+    review,
+  });
 }
 
 function isTauriRuntime(): boolean {

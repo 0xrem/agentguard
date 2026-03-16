@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLanguage } from '../i18n';
-import type { AuditRecord, Layer, EnforcementAction, RiskLevel } from '../types';
+import type { AuditRecord, AuditReview, AuditReviewStatus, Layer, EnforcementAction, RiskLevel } from '../types';
 
 export interface AuditFilters {
   searchQuery: string;
@@ -12,6 +12,7 @@ export interface AuditFilters {
 
 interface AuditPageProps {
   records: AuditRecord[];
+  reviewMap?: Record<number, AuditReview>;
   loading: boolean;
   onRefresh?: () => void;
   currentPage?: number;
@@ -19,10 +20,12 @@ interface AuditPageProps {
   onPageChange?: (page: number) => void;
   filters?: AuditFilters;
   onFiltersChange?: (filters: AuditFilters) => void;
+  onUpdateReview?: (auditRecordId: number, status: AuditReviewStatus, note?: string, label?: string) => void;
 }
 
 export function AuditPage({
   records,
+  reviewMap = {},
   loading,
   onRefresh,
   currentPage = 1,
@@ -30,6 +33,7 @@ export function AuditPage({
   onPageChange,
   filters,
   onFiltersChange,
+  onUpdateReview,
 }: AuditPageProps) {
   const { t } = useLanguage();
   const [searchQuery, setSearchQuery] = useState(filters?.searchQuery ?? '');
@@ -39,6 +43,10 @@ export function AuditPage({
   const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'custom'>(filters?.timeRange ?? '7d');
   const [selectedRecord, setSelectedRecord] = useState<AuditRecord | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<'all' | AuditReviewStatus>('all');
+  const [reviewNote, setReviewNote] = useState('');
+
+  const selectedReview = selectedRecord ? reviewMap[selectedRecord.id] : undefined;
 
   useEffect(() => {
     onFiltersChange?.({
@@ -56,9 +64,15 @@ export function AuditPage({
       if (filterLayer !== 'all' && record.event.layer !== filterLayer) {
         return false;
       }
+      if (reviewFilter !== 'all') {
+        const status = reviewMap[record.id]?.status ?? 'unreviewed';
+        if (status !== reviewFilter) {
+          return false;
+        }
+      }
       return true;
     });
-  }, [records, filterLayer]);
+  }, [records, filterLayer, reviewFilter, reviewMap]);
 
   const clearFilters = () => {
     setSearchQuery('');
@@ -66,11 +80,30 @@ export function AuditPage({
     setFilterAction('all');
     setFilterRisk('all');
     setTimeRange('7d');
+    setReviewFilter('all');
   };
 
   const handleViewDetails = (record: AuditRecord) => {
     setSelectedRecord(record);
+    setReviewNote(reviewMap[record.id]?.note ?? '');
     setShowDetailModal(true);
+  };
+
+  const reviewStatusLabel = (status: AuditReviewStatus) => {
+    switch (status) {
+      case 'false_positive':
+        return '误报';
+      case 'resolved':
+        return '已处理';
+      case 'needs_attention':
+        return '需关注';
+      default:
+        return '未复核';
+    }
+  };
+
+  const handleReview = (recordId: number, status: AuditReviewStatus, label?: string) => {
+    onUpdateReview?.(recordId, status, reviewNote.trim() || undefined, label);
   };
 
   const handleExport = async (format: 'json' | 'csv') => {
@@ -223,7 +256,19 @@ export function AuditPage({
             <option value="low">Low</option>
           </select>
 
-          {(filterLayer !== 'all' || filterAction !== 'all' || filterRisk !== 'all' || searchQuery || timeRange !== '7d') && (
+          <select
+            className="filter-select"
+            value={reviewFilter}
+            onChange={(e) => setReviewFilter(e.target.value as 'all' | AuditReviewStatus)}
+          >
+            <option value="all">全部复核状态</option>
+            <option value="unreviewed">未复核</option>
+            <option value="false_positive">误报</option>
+            <option value="resolved">已处理</option>
+            <option value="needs_attention">需关注</option>
+          </select>
+
+          {(filterLayer !== 'all' || filterAction !== 'all' || filterRisk !== 'all' || searchQuery || timeRange !== '7d' || reviewFilter !== 'all') && (
             <button className="btn btn-text" onClick={clearFilters}>
               {t.audit.clearFilters}
             </button>
@@ -241,6 +286,7 @@ export function AuditPage({
               <th>{t.audit.target}</th>
               <th>{t.audit.action}</th>
               <th>{t.audit.risk}</th>
+              <th>复核</th>
               <th>{t.audit.details}</th>
             </tr>
           </thead>
@@ -273,6 +319,11 @@ export function AuditPage({
                       {record.decision.risk || 'N/A'}
                     </span>
                   </td>
+                  <td>
+                    <span className={`badge review-badge review-${reviewMap[record.id]?.status ?? 'unreviewed'}`}>
+                      {reviewStatusLabel(reviewMap[record.id]?.status ?? 'unreviewed')}
+                    </span>
+                  </td>
                   <td className="details">
                     <button className="btn btn-sm" onClick={() => handleViewDetails(record)}>
                       View
@@ -282,7 +333,7 @@ export function AuditPage({
               ))
             ) : (
               <tr>
-                <td colSpan={7} className="empty-state">
+                <td colSpan={8} className="empty-state">
                   {t.audit.noLogs}
                 </td>
               </tr>
@@ -378,6 +429,38 @@ export function AuditPage({
                     <span className="detail-label">Reason:</span>
                     <span className="detail-value">{selectedRecord.decision.reason}</span>
                   </div>
+                </div>
+              </div>
+
+              <div className="detail-section">
+                <h3>Review Workflow</h3>
+                <div className="detail-grid">
+                  <div className="detail-row">
+                    <span className="detail-label">Current:</span>
+                    <span className="detail-value">
+                      {reviewStatusLabel(selectedReview?.status ?? 'unreviewed')}
+                    </span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Reviewer Note:</span>
+                    <input
+                      className="search-input"
+                      value={reviewNote}
+                      onChange={(e) => setReviewNote(e.target.value)}
+                      placeholder="e.g. safe internal endpoint / expected behavior"
+                    />
+                  </div>
+                </div>
+                <div className="page-actions" style={{ marginTop: 12 }}>
+                  <button className="btn btn-secondary" onClick={() => handleReview(selectedRecord.id, 'false_positive', 'false_positive')}>
+                    标记误报
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => handleReview(selectedRecord.id, 'needs_attention', 'needs_attention')}>
+                    标记需关注
+                  </button>
+                  <button className="btn btn-primary" onClick={() => handleReview(selectedRecord.id, 'resolved', 'resolved')}>
+                    标记已处理
+                  </button>
                 </div>
               </div>
 

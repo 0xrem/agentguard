@@ -233,3 +233,28 @@ export interface RuleConflict {
   rule_b_id: string;
   description: string;
 }
+
+export type AuditReviewStatus = "unreviewed" | "false_positive" | "resolved" | "needs_attention";
+
+export interface AuditReview {
+  audit_record_id: number;
+  status: AuditReviewStatus;
+  label: string | null;
+  note: string | null;
+  reviewed_by: string | null;
+  updated_at_unix_ms: number;
+}
+
+export interface AuditReviewQuery {
+  record_ids?: number[];
+  status?: AuditReviewStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditReviewUpdate {
+  status: AuditReviewStatus;
+  label?: string | null;
+  note?: string | null;
+  reviewed_by?: string | null;
+}

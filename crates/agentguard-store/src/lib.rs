@@ -12,7 +12,7 @@ use agentguard_models::{
     Rule,
 };
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS audit_records (
     event_json TEXT NOT NULL,
     decision_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_reviews (
+    audit_record_id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL,
+    label TEXT,
+    note TEXT,
+    reviewed_by TEXT,
+    updated_at_unix_ms INTEGER NOT NULL,
+    FOREIGN KEY (audit_record_id) REFERENCES audit_records(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_reviews_status_updated
+ON audit_reviews(status, updated_at_unix_ms DESC, audit_record_id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_audit_records_recorded_at
 ON audit_records(recorded_at_unix_ms DESC, id DESC);
@@ -524,6 +537,140 @@ impl AuditStore {
             .map_err(StoreError::from)
     }
 
+    pub fn upsert_audit_review(
+        &self,
+        audit_record_id: i64,
+        status: &str,
+        label: Option<&str>,
+        note: Option<&str>,
+        reviewed_by: Option<&str>,
+    ) -> Result<AuditReview> {
+        validate_audit_review_status(status)?;
+
+        if self.get_audit_record(audit_record_id)?.is_none() {
+            return Err(StoreError::InvalidInput(format!(
+                "audit record not found: {audit_record_id}"
+            )));
+        }
+
+        let updated_at_unix_ms = unix_timestamp_ms()?;
+        self.connection.execute(
+            r#"
+            INSERT INTO audit_reviews (
+                audit_record_id,
+                status,
+                label,
+                note,
+                reviewed_by,
+                updated_at_unix_ms
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(audit_record_id) DO UPDATE SET
+                status = excluded.status,
+                label = excluded.label,
+                note = excluded.note,
+                reviewed_by = excluded.reviewed_by,
+                updated_at_unix_ms = excluded.updated_at_unix_ms
+            "#,
+            params![
+                audit_record_id,
+                status,
+                label,
+                note,
+                reviewed_by,
+                updated_at_unix_ms,
+            ],
+        )?;
+
+        self.get_audit_review(audit_record_id)?.ok_or_else(|| {
+            StoreError::InvalidInput("audit review was not found after save".into())
+        })
+    }
+
+    pub fn get_audit_review(&self, audit_record_id: i64) -> Result<Option<AuditReview>> {
+        self.connection
+            .query_row(
+                r#"
+                SELECT audit_record_id, status, label, note, reviewed_by, updated_at_unix_ms
+                FROM audit_reviews
+                WHERE audit_record_id = ?1
+                "#,
+                params![audit_record_id],
+                |row| {
+                    Ok(AuditReview {
+                        audit_record_id: row.get(0)?,
+                        status: row.get(1)?,
+                        label: row.get(2)?,
+                        note: row.get(3)?,
+                        reviewed_by: row.get(4)?,
+                        updated_at_unix_ms: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    pub fn list_audit_reviews(
+        &self,
+        record_ids: &[i64],
+        status: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AuditReview>> {
+        if let Some(status) = status {
+            validate_audit_review_status(status)?;
+        }
+
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut sql = String::from(
+            r#"
+            SELECT audit_record_id, status, label, note, reviewed_by, updated_at_unix_ms
+            FROM audit_reviews
+            WHERE 1 = 1
+            "#,
+        );
+        let mut bind_values: Vec<Value> = Vec::new();
+
+        if let Some(status) = status {
+            sql.push_str(" AND status = ?");
+            bind_values.push(Value::from(status.to_string()));
+        }
+
+        if !record_ids.is_empty() {
+            sql.push_str(" AND audit_record_id IN (");
+            for (i, record_id) in record_ids.iter().enumerate() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push('?');
+                bind_values.push(Value::from(*record_id));
+            }
+            sql.push(')');
+        }
+
+        sql.push_str(" ORDER BY updated_at_unix_ms DESC, audit_record_id DESC LIMIT ? OFFSET ?");
+        bind_values.push(Value::from(limit as i64));
+        bind_values.push(Value::from(offset as i64));
+
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(bind_values.iter()), |row| {
+            Ok(AuditReview {
+                audit_record_id: row.get(0)?,
+                status: row.get(1)?,
+                label: row.get(2)?,
+                note: row.get(3)?,
+                reviewed_by: row.get(4)?,
+                updated_at_unix_ms: row.get(5)?,
+            })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
     pub fn save_rule(&self, rule: &Rule) -> Result<ManagedRule> {
         if rule.id.trim().is_empty() {
             return Err(StoreError::InvalidInput(
@@ -765,6 +912,25 @@ pub struct AuditStats {
     pub by_risk: BTreeMap<String, usize>,
     pub by_layer: BTreeMap<String, usize>,
     pub top_agents: Vec<(String, usize)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditReview {
+    pub audit_record_id: i64,
+    pub status: String,
+    pub label: Option<String>,
+    pub note: Option<String>,
+    pub reviewed_by: Option<String>,
+    pub updated_at_unix_ms: i64,
+}
+
+fn validate_audit_review_status(status: &str) -> Result<()> {
+    match status {
+        "unreviewed" | "false_positive" | "resolved" | "needs_attention" => Ok(()),
+        _ => Err(StoreError::InvalidInput(format!(
+            "unsupported audit review status: {status}"
+        ))),
+    }
 }
 
 fn managed_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManagedRule> {

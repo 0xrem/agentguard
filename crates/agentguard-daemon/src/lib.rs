@@ -12,7 +12,7 @@ use agentguard_models::{
     ResolveApprovalRequest, Rule,
 };
 use agentguard_policy::{PolicyEngine, default_rules};
-use agentguard_store::{AuditRecordQuery, AuditStats, AuditStore, StoreError};
+use agentguard_store::{AuditRecordQuery, AuditReview, AuditStats, AuditStore, StoreError};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -102,6 +102,31 @@ impl AgentGuardDaemon {
 
     pub fn audit_stats(&self, since_unix_ms: i64) -> Result<AuditStats> {
         self.store.audit_stats(since_unix_ms).map_err(Into::into)
+    }
+
+    pub fn upsert_audit_review(
+        &self,
+        audit_record_id: i64,
+        status: &str,
+        label: Option<&str>,
+        note: Option<&str>,
+        reviewed_by: Option<&str>,
+    ) -> Result<AuditReview> {
+        self.store
+            .upsert_audit_review(audit_record_id, status, label, note, reviewed_by)
+            .map_err(Into::into)
+    }
+
+    pub fn list_audit_reviews(
+        &self,
+        record_ids: &[i64],
+        status: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<AuditReview>> {
+        self.store
+            .list_audit_reviews(record_ids, status, limit, offset)
+            .map_err(Into::into)
     }
 
     pub fn list_approval_requests(
@@ -375,6 +400,22 @@ struct AuditStatsQuery {
     since: Option<i64>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct AuditReviewListQuery {
+    record_ids: Option<String>,
+    status: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpsertAuditReviewRequest {
+    status: String,
+    label: Option<String>,
+    note: Option<String>,
+    reviewed_by: Option<String>,
+}
+
 pub fn app(daemon: AgentGuardDaemon) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -382,6 +423,8 @@ pub fn app(daemon: AgentGuardDaemon) -> Router {
         .route("/v1/evaluate", post(evaluate_event))
         .route("/v1/audit", get(list_audit_records))
         .route("/v1/audit/stats", get(get_audit_stats))
+        .route("/v1/audit/reviews", get(list_audit_reviews))
+        .route("/v1/audit/{audit_record_id}/review", post(upsert_audit_review))
         .route("/v1/approvals", get(list_approval_requests))
         .route("/v1/rules", get(list_rules).post(create_rule))
         .route("/v1/rules/conflicts", get(list_rule_conflicts))
@@ -527,6 +570,59 @@ async fn get_audit_stats(
     });
     let stats = state.daemon.lock().map_err(lock_error)?.audit_stats(since)?;
     Ok(Json(stats))
+}
+
+async fn list_audit_reviews(
+    State(state): State<ApiState>,
+    Query(query): Query<AuditReviewListQuery>,
+) -> std::result::Result<Json<Vec<AuditReview>>, DaemonApiError> {
+    let limit = query.limit.unwrap_or(200).min(1_000);
+    let offset = query.offset.unwrap_or(0);
+    let record_ids = parse_record_ids(query.record_ids.as_deref())?;
+    let reviews = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .list_audit_reviews(&record_ids, query.status.as_deref(), limit, offset)?;
+    Ok(Json(reviews))
+}
+
+async fn upsert_audit_review(
+    State(state): State<ApiState>,
+    Path(audit_record_id): Path<i64>,
+    Json(body): Json<UpsertAuditReviewRequest>,
+) -> std::result::Result<Json<AuditReview>, DaemonApiError> {
+    let review = state
+        .daemon
+        .lock()
+        .map_err(lock_error)?
+        .upsert_audit_review(
+            audit_record_id,
+            body.status.as_str(),
+            body.label.as_deref(),
+            body.note.as_deref(),
+            body.reviewed_by.as_deref(),
+        )?;
+    Ok(Json(review))
+}
+
+fn parse_record_ids(raw: Option<&str>) -> std::result::Result<Vec<i64>, DaemonApiError> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    raw.split(',')
+        .map(|value| {
+            value
+                .trim()
+                .parse::<i64>()
+                .map_err(|_| DaemonApiError::InvalidRequest(format!("invalid record id: {value}")))
+        })
+        .collect()
 }
 
 async fn list_rule_conflicts(

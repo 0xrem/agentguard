@@ -173,6 +173,33 @@ struct AuditQuery {
     offset: Option<usize>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AuditReview {
+    audit_record_id: i64,
+    status: String,
+    label: Option<String>,
+    note: Option<String>,
+    reviewed_by: Option<String>,
+    updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditReviewQuery {
+    record_ids: Option<Vec<i64>>,
+    status: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AuditReviewUpdate {
+    status: String,
+    label: Option<String>,
+    note: Option<String>,
+    reviewed_by: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct RuntimeStartResult {
@@ -540,6 +567,75 @@ async fn detect_rule_conflicts(
             })
         })
         .collect())
+}
+
+#[tauri::command]
+async fn query_audit_reviews(
+    state: tauri::State<'_, DesktopState>,
+    query: AuditReviewQuery,
+) -> Result<Vec<AuditReview>, String> {
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(record_ids) = &query.record_ids
+        && !record_ids.is_empty()
+    {
+        let joined = record_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        params.push(("record_ids", joined));
+    }
+    if let Some(status) = &query.status {
+        params.push(("status", status.clone()));
+    }
+    if let Some(limit) = query.limit {
+        params.push(("limit", limit.to_string()));
+    }
+    if let Some(offset) = query.offset {
+        params.push(("offset", offset.to_string()));
+    }
+
+    let response = state
+        .client
+        .get(format!("{}/v1/audit/reviews", state.daemon_url))
+        .query(&params)
+        .send()
+        .await
+        .map_err(|error| format!("failed to query audit reviews: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("failed to query audit reviews: {}", response.status()));
+    }
+
+    response
+        .json::<Vec<AuditReview>>()
+        .await
+        .map_err(|error| format!("failed to decode audit reviews: {error}"))
+}
+
+#[tauri::command]
+async fn update_audit_review(
+    state: tauri::State<'_, DesktopState>,
+    audit_record_id: i64,
+    review: AuditReviewUpdate,
+) -> Result<AuditReview, String> {
+    let url = format!("{}/v1/audit/{}/review", state.daemon_url, audit_record_id);
+    let response = state
+        .client
+        .post(url)
+        .json(&review)
+        .send()
+        .await
+        .map_err(|error| format!("failed to update audit review: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("failed to update audit review: {}", response.status()));
+    }
+
+    response
+        .json::<AuditReview>()
+        .await
+        .map_err(|error| format!("failed to decode audit review: {error}"))
 }
 
 #[tauri::command]
@@ -1940,6 +2036,8 @@ pub fn run() {
             import_policy_rules,
             query_audit_logs,
             get_audit_stats,
+            query_audit_reviews,
+            update_audit_review,
             detect_rule_conflicts,
             list_runtime_processes
         ])

@@ -7,6 +7,7 @@ import {
   importRules,
   loadDashboard,
   loadProcesses,
+  queryAuditReviews,
   queryAuditLogs,
   loadRuntimeEnvironment,
   resolveApprovalRequest,
@@ -15,6 +16,7 @@ import {
   setPolicyRuleEnabled,
   startLocalStack,
   submitSampleEvent,
+  updateAuditReview,
 } from "./api";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./pages/Dashboard";
@@ -28,6 +30,8 @@ import { useLanguage, type Language, type NavItem } from "./i18n";
 import type {
   ApprovalRequest,
   AuditRecord,
+  AuditReview,
+  AuditReviewStatus,
   AuditQuery,
   AuditStats,
   DashboardSnapshot,
@@ -172,6 +176,7 @@ export default function App() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [auditRecords, setAuditRecords] = useState<AuditRecord[]>([]);
+  const [auditReviewMap, setAuditReviewMap] = useState<Record<number, AuditReview>>({});
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditLoaded, setAuditLoaded] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
@@ -329,8 +334,20 @@ export default function App() {
         offset: (auditPage - 1) * AUDIT_PAGE_SIZE,
       };
       const raw = await queryAuditLogs(query);
+      const pageRecords = raw.slice(0, AUDIT_PAGE_SIZE);
       setAuditHasNextPage(raw.length > AUDIT_PAGE_SIZE);
-      setAuditRecords(raw.slice(0, AUDIT_PAGE_SIZE));
+      setAuditRecords(pageRecords);
+
+      const reviewRows = await queryAuditReviews({
+        record_ids: pageRecords.map((item) => item.id),
+        limit: AUDIT_PAGE_SIZE,
+      });
+      setAuditReviewMap(
+        reviewRows.reduce<Record<number, AuditReview>>((acc, item) => {
+          acc[item.audit_record_id] = item;
+          return acc;
+        }, {}),
+      );
       setAuditLoaded(true);
       setError(null);
     } catch (auditError) {
@@ -355,6 +372,29 @@ export default function App() {
   function handleAuditFiltersChange(nextFilters: AuditFilters) {
     setAuditPage(1);
     setAuditFilters(nextFilters);
+  }
+
+  async function handleAuditReviewUpdate(
+    auditRecordId: number,
+    status: AuditReviewStatus,
+    note?: string,
+    label?: string,
+  ) {
+    try {
+      const updated = await updateAuditReview(auditRecordId, {
+        status,
+        note: note ?? null,
+        label: label ?? null,
+        reviewed_by: "desktop_user",
+      });
+      setAuditReviewMap((prev) => ({
+        ...prev,
+        [updated.audit_record_id]: updated,
+      }));
+      setError(null);
+    } catch (reviewError) {
+      setError(getErrorMessage(reviewError));
+    }
   }
 
   async function refreshProcesses() {
@@ -932,12 +972,14 @@ export default function App() {
       {currentPage === 'audit' && (
         <AuditPage
           records={auditLoaded ? auditRecords : filteredAuditRecords}
+          reviewMap={auditReviewMap}
           loading={auditLoading || loading}
           currentPage={auditPage}
           hasNextPage={auditHasNextPage}
           onPageChange={setAuditPage}
           filters={auditFilters}
           onFiltersChange={handleAuditFiltersChange}
+          onUpdateReview={handleAuditReviewUpdate}
           onRefresh={() => void refreshAuditLogs()}
         />
       )}
