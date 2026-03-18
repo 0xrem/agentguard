@@ -374,6 +374,61 @@ async fn load_dashboard_snapshot(
     })
 }
 
+#[derive(Serialize)]
+struct DashboardMetrics {
+    agent_count: usize,
+    pending_approval_count: usize,
+    latest_record_id: Option<i64>,
+    total_risk_count: u32,
+    hash: String,
+}
+
+#[tauri::command]
+async fn get_dashboard_metrics(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<DashboardMetrics, String> {
+    // Fetch only essential counts for change detection
+    let records = match fetch_recent_audit(&state, 1).await {
+        Ok(records) => records,
+        Err(_) => Vec::new(),
+    };
+    
+    let pending_approvals = match fetch_pending_approvals(&state, 10).await {
+        Ok(approvals) => approvals,
+        Err(_) => Vec::new(),
+    };
+    
+    let latest_record_id = records.first().map(|r| r.id);
+    let counts = if !records.is_empty() {
+        summarize_counts(&records)
+    } else {
+        summarize_counts(&match fetch_recent_audit(&state, 25).await {
+            Ok(recs) => recs,
+            Err(_) => Vec::new(),
+        })
+    };
+    
+    let total_risk_count = counts.high + counts.medium + counts.low;
+    
+    // Simple hash for change detection
+    let hash_input = format!(
+        "{:?}:{:?}:{:?}:{}",
+        pending_approvals.len(),
+        latest_record_id,
+        total_risk_count,
+        records.len()
+    );
+    let hash = format!("h{}", hash_input.len());
+    
+    Ok(DashboardMetrics {
+        agent_count: records.len(),
+        pending_approval_count: pending_approvals.len(),
+        latest_record_id,
+        total_risk_count,
+        hash,
+    })
+}
+
 #[tauri::command]
 fn load_runtime_environment(
     state: tauri::State<'_, DesktopState>,
@@ -2252,6 +2307,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             load_dashboard_snapshot,
+            get_dashboard_metrics,
             load_runtime_environment,
             submit_sample_event,
             resolve_approval_request,

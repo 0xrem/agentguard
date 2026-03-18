@@ -45,6 +45,37 @@ export async function loadDashboard(limit = 25): Promise<DashboardSnapshot> {
   return invoke<DashboardSnapshot>("load_dashboard_snapshot", { limit });
 }
 
+export interface DashboardMetrics {
+  agentCount: number;
+  pendingApprovalCount: number;
+  latestRecordId: number | null;
+  totalRiskCount: number;
+  hash: string; // Used for change detection
+}
+
+export async function getDashboardMetrics(): Promise<DashboardMetrics> {
+  if (!isTauriRuntime()) {
+    // Generate metrics from mock dashboard
+    const dashboard = await mockDashboard(25);
+    const totalRisk = Object.values(dashboard.counts).reduce((a, b) => a + b, 0);
+    const data = JSON.stringify([
+      dashboard.records.length,
+      dashboard.pending_approvals.length,
+      dashboard.records[0]?.id ?? 0,
+      totalRisk,
+    ]);
+    return {
+      agentCount: dashboard.records.length,
+      pendingApprovalCount: dashboard.pending_approvals.length,
+      latestRecordId: dashboard.records[0]?.id ?? null,
+      totalRiskCount: totalRisk,
+      hash: `h${data.length}`, // Simple hash
+    };
+  }
+
+  return invoke<DashboardMetrics>("get_dashboard_metrics");
+}
+
 export async function loadRuntimeEnvironment(): Promise<RuntimeEnvironment> {
   if (!isTauriRuntime()) {
     return mockLoadRuntimeEnvironment();

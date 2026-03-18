@@ -20,6 +20,7 @@ interface DashboardProps {
   auditStats: AuditStats | null;
   refreshing: boolean;
   error: string | null;
+  lastRefreshTime: number;
   selectedScenario: SampleEventKind;
   onScenarioChange: (scenario: SampleEventKind) => void;
   onScenarioSubmit: () => void;
@@ -61,6 +62,7 @@ export function Dashboard({
   auditStats,
   refreshing,
   error,
+  lastRefreshTime,
   selectedScenario,
   onScenarioChange,
   onScenarioSubmit,
@@ -91,7 +93,6 @@ export function Dashboard({
   actionCards,
 }: DashboardProps) {
   const { t } = useLanguage();
-  const [showRecentActivity, setShowRecentActivity] = useState(false);
   const [showRecoveredSessions, setShowRecoveredSessions] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'prompt' | 'command' | 'behavior'>('all');
   
@@ -178,6 +179,11 @@ export function Dashboard({
         <div className="page-title">
           <h1>Agent Runtime Control Room</h1>
           <p>桌面控制台：实时看到系统 Agent、每一步行为、异常与审批。</p>
+        </div>
+        <div className="page-header-meta">
+          <span className="refresh-status">
+            {refreshing ? '更新中...' : '最后更新: ' + new Date(lastRefreshTime).toLocaleTimeString()}
+          </span>
         </div>
       </header>
 
@@ -351,7 +357,7 @@ export function Dashboard({
               <div key={`coverage-regression-${item.process.pid}`} className={`protection-alert ${item.severity}`}>
                 <div className="protection-alert-processes">
                   <span className="protection-process-pill">
-                    🔴 {item.process.name} (pid {item.process.pid}) · {item.process.coverageStatus}
+                    HIGH {item.process.name} (pid {item.process.pid}) · {item.process.coverageStatus}
                   </span>
                   <span className="protection-process-pill">
                     持续 {formatDuration(item.durationMs)}
@@ -396,7 +402,7 @@ export function Dashboard({
             <div className="activity-list">
               {recentRecoveries.slice(0, 5).map((item) => (
                 <div key={`recovery-${item.process.pid}-${item.recoveredAt}`} className="activity-item">
-                  <div className="activity-icon">🟢</div>
+                  <div className="activity-icon">OK</div>
                   <div className="activity-content">
                     <div className="activity-title">{item.process.name} 已恢复受保护</div>
                     <div className="activity-subtitle">退化时长 {formatDuration(item.downtimeMs)}</div>
@@ -423,7 +429,7 @@ export function Dashboard({
           </div>
         ) : null}
         {protectionAlerts.length === 0 ? (
-          <div className="protection-ok">✅ {t.dashboard.noProtectionAlerts}</div>
+          <div className="protection-ok">ALL CLEAR · {t.dashboard.noProtectionAlerts}</div>
         ) : (
           <div className="protection-alert-list">
             {protectionAlerts.some((alert) => alert.severity === 'warning') ? (
@@ -468,7 +474,7 @@ export function Dashboard({
                     <div className="protection-alert-processes">
                   {alert.processes.map((process) => (
                     <span key={process.pid} className="protection-process-pill">
-                      {process.risk === 'high' ? '🔴' : process.risk === 'medium' ? '🟠' : '🟢'} {process.name} (pid {process.pid})
+                      {process.risk.toUpperCase()} {process.name} (pid {process.pid})
                     </span>
                   ))}
                 </div>

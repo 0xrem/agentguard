@@ -9,12 +9,12 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', labelZh: '仪表盘', icon: '📊' },
-  { id: 'setup', label: 'Setup', labelZh: '快速接入', icon: '🛡️' },
-  { id: 'audit', label: 'Audit Logs', labelZh: '审计日志', icon: '📜' },
-  { id: 'processes', label: 'Processes', labelZh: '进程监控', icon: '⚙️' },
-  { id: 'rules', label: 'Rules', labelZh: '规则管理', icon: '📋' },
-  { id: 'settings', label: 'Settings', labelZh: '设置', icon: '🧰' },
+  { id: 'dashboard', label: 'Dashboard', labelZh: '仪表盘', icon: '◧' },
+  { id: 'setup', label: 'Setup', labelZh: '快速接入', icon: '◫' },
+  { id: 'audit', label: 'Audit Logs', labelZh: '审计日志', icon: '▤' },
+  { id: 'processes', label: 'Processes', labelZh: '进程监控', icon: '◎' },
+  { id: 'rules', label: 'Rules', labelZh: '规则管理', icon: '▣' },
+  { id: 'settings', label: 'Settings', labelZh: '设置', icon: '◉' },
 ];
 
 // i18n 翻译类型

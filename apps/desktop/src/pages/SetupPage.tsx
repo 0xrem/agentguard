@@ -13,11 +13,11 @@ interface SetupPageProps {
 }
 
 const TOOL_TABS: Array<{ id: ToolTab; icon: string; label: string }> = [
-  { id: 'shell',       icon: '🐚', label: 'Terminal / Shell' },
-  { id: 'claude-code', icon: '🤖', label: 'Claude Code' },
-  { id: 'cursor',      icon: '✏️', label: 'Cursor' },
-  { id: 'python',      icon: '🐍', label: 'Python' },
-  { id: 'dotenv',      icon: '📄', label: '.env file' },
+  { id: 'shell',       icon: 'SH', label: 'Terminal / Shell' },
+  { id: 'claude-code', icon: 'CC', label: 'Claude Code' },
+  { id: 'cursor',      icon: 'CU', label: 'Cursor' },
+  { id: 'python',      icon: 'PY', label: 'Python' },
+  { id: 'dotenv',      icon: 'ENV', label: '.env file' },
 ];
 
 function CodeBlock({ code, language = 'bash' }: { code: string; language?: string }) {
@@ -35,7 +35,7 @@ function CodeBlock({ code, language = 'bash' }: { code: string; language?: strin
       <div className="setup-code-header">
         <span className="setup-code-lang">{language}</span>
         <button className="setup-copy-btn" onClick={handleCopy}>
-          {copied ? '✅ Copied!' : '📋 Copy'}
+          {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
       <pre className="setup-code-pre"><code>{code}</code></pre>
@@ -54,7 +54,7 @@ function ToolInstructions({ tool, proxyUrl }: { tool: ToolTab; proxyUrl: string 
           </p>
           <CodeBlock code={`export OPENAI_BASE_URL="${proxyUrl}"\nexport OPENAI_API_KEY="<your-openai-key>"  # still required`} language="bash" />
           <p className="setup-instructions-tip">
-            💡 Or set it temporarily for a single session: run the <code>export</code> commands before launching your AI tool.
+            Tip: set it temporarily for one session by running these <code>export</code> commands before launching your AI tool.
           </p>
         </div>
       );
@@ -71,7 +71,7 @@ function ToolInstructions({ tool, proxyUrl }: { tool: ToolTab; proxyUrl: string 
           </p>
           <CodeBlock code={`# ~/.zshrc\nexport OPENAI_BASE_URL="${proxyUrl}"`} language="bash" />
           <p className="setup-instructions-tip">
-            💡 Once set, every Claude Code session — and every file read, write, and command it executes — is inspected by AgentGuard in real time.
+            Tip: once set, every Claude Code session and tool action is inspected by AgentGuard in real time.
           </p>
         </div>
       );
@@ -88,7 +88,7 @@ function ToolInstructions({ tool, proxyUrl }: { tool: ToolTab; proxyUrl: string 
           </p>
           <CodeBlock code={`OPENAI_BASE_URL="${proxyUrl}" cursor .`} language="bash" />
           <p className="setup-instructions-tip">
-            💡 After this, all Cursor Composer and Chat API calls are inspected and can be blocked or queued for your approval.
+            Tip: after this, all Cursor Composer and Chat API calls are inspected and can be blocked or queued for approval.
           </p>
         </div>
       );
@@ -115,7 +115,7 @@ function ToolInstructions({ tool, proxyUrl }: { tool: ToolTab; proxyUrl: string 
           </p>
           <CodeBlock code={`OPENAI_BASE_URL="${proxyUrl}"`} language="dotenv" />
           <p className="setup-instructions-tip">
-            💡 No code changes required — just the env var. Don't forget to add <code>.env</code> to <code>.gitignore</code> if it also contains your API key.
+            Tip: no code changes required, just this env var. Add <code>.env</code> to <code>.gitignore</code> if it also contains your API key.
           </p>
         </div>
       );
@@ -269,7 +269,7 @@ export function SetupPage({
     <div className="setup-page">
       <header className="page-header">
         <div className="page-title">
-          <h1>🛡️ {t.setup.title}</h1>
+          <h1>{t.setup.title}</h1>
           <p>{t.setup.subtitle}</p>
         </div>
       </header>
@@ -366,7 +366,7 @@ export function SetupPage({
       {/* 完成提示 */}
       {isStackReady && (
         <div className="setup-done-banner">
-          <div className="setup-done-icon">🎉</div>
+          <div className="setup-done-icon">OK</div>
           <div>
             <strong>{t.setup.doneTitle}</strong>
             <p>{t.setup.doneDesc}</p>
@@ -402,7 +402,7 @@ export function SetupPage({
                   {verification.items.map((item, index) => (
                     <div key={`${item.name}-${index}`} className={`setup-verification-item ${item.status}`}>
                       <div className="setup-verification-item-title">
-                        <span>{item.status === 'pass' ? '✅' : item.status === 'warn' ? '⚠️' : '⛔'}</span>
+                        <span>{item.status === 'pass' ? 'PASS' : item.status === 'warn' ? 'WARN' : 'FAIL'}</span>
                         <span>{item.name}</span>
                       </div>
                       <div className="setup-verification-item-detail">{item.detail}</div>

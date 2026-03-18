@@ -4,6 +4,7 @@ import {
   detectRuleConflicts,
   exportRules,
   getAuditStats,
+  getDashboardMetrics,
   importRules,
   loadDashboard,
   loadProcesses,
@@ -17,6 +18,7 @@ import {
   startLocalStack,
   submitSampleEvent,
   updateAuditReview,
+  type DashboardMetrics,
 } from "./api";
 import { mockLoadProcesses } from "./mock";
 import { Layout } from "./components/Layout";
@@ -255,13 +257,33 @@ export default function App() {
 
   const [auditStats, setAuditStats] = useState<AuditStats | null>(null);
   const [ruleConflicts, setRuleConflicts] = useState<RuleConflict[]>([]);
+  const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now());
+  
+  // Smart polling: track last metrics to detect changes
+  const lastMetricsRef = useRef<DashboardMetrics | null>(null);
 
   useEffect(() => {
     void refreshDashboard(true);
 
     const timer = window.setInterval(() => {
-      void refreshDashboard(false);
-    }, 5000);
+      // Smart polling: first check metrics to detect changes
+      void (async () => {
+        try {
+          const metrics = await getDashboardMetrics();
+          const lastMetrics = lastMetricsRef.current;
+          
+          // Only refresh full dashboard if metrics changed or it's first check
+          if (!lastMetrics || metrics.hash !== lastMetrics.hash) {
+            lastMetricsRef.current = metrics;
+            await refreshDashboard(false);
+          }
+        } catch (e) {
+          console.error("[Smart polling] Error:", e);
+          // Fallback: do full refresh on error
+          await refreshDashboard(false);
+        }
+      })();
+    }, 2000);
 
     return () => window.clearInterval(timer);
   }, []);
@@ -351,6 +373,7 @@ export default function App() {
         setSnapshot(nextSnapshot);
         setRuntimeEnvironment(nextRuntimeEnvironment);
         setProcesses(smoothRuntimeProcesses(nextProcesses, processNetworkCacheRef.current));
+        setLastRefreshTime(Date.now());
       });
     } catch (refreshError) {
       setError(getErrorMessage(refreshError));
@@ -481,7 +504,7 @@ export default function App() {
     void refreshProcesses();
     const timer = window.setInterval(() => {
       void refreshProcesses();
-    }, 5000);
+    }, 2000);
 
     return () => window.clearInterval(timer);
   }, [currentPage, processDataMode, syntheticAgentCount]);
@@ -600,7 +623,8 @@ export default function App() {
 
   async function handleQuickResolveApproval(approvalId: number, action: "allow" | "block") {
     try {
-      await resolveApprovalRequest(approvalId, action, "Resolved from desktop control room");
+      await resolveApprovalRequest(approvalId, action, "Quick resolve from control room");
+      // Immediate refresh for snappy feedback
       await refreshDashboard(false);
     } catch (resolveError) {
       setError(getErrorMessage(resolveError));
@@ -621,6 +645,7 @@ export default function App() {
         "block",
         "Dismissed by user",
       );
+      // Immediate refresh to reflect dismissal
       await refreshDashboard(false);
     } catch (dismissError) {
       setError(getErrorMessage(dismissError));
@@ -1168,13 +1193,20 @@ export default function App() {
   }
 
   return (
-    <Layout currentPage={currentPage} onPageChange={setCurrentPage}>
+    <Layout
+      currentPage={currentPage}
+      onPageChange={setCurrentPage}
+      onRefresh={() => void refreshDashboard(false)}
+      onStartStack={() => void handleStartLocalStack()}
+      onRunDemo={() => void handleRunRealDemo()}
+    >
       {currentPage === 'dashboard' && (
         <Dashboard
           snapshot={snapshot}
           auditStats={auditStats}
           refreshing={refreshing}
           error={error}
+          lastRefreshTime={lastRefreshTime}
           selectedScenario={selectedScenario}
           onScenarioChange={setSelectedScenario}
           onScenarioSubmit={handleScenarioSubmit}

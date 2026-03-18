@@ -157,12 +157,12 @@ export function AuditPage({
 
   const getActionIcon = (action: EnforcementAction) => {
     switch (action) {
-      case 'block': return '🚫';
-      case 'allow': return '✅';
-      case 'ask': return '⏳';
-      case 'warn': return '⚠️';
-      case 'kill': return '💀';
-      default: return '❓';
+      case 'block': return 'BLK';
+      case 'allow': return 'ALW';
+      case 'ask': return 'ASK';
+      case 'warn': return 'WRN';
+      case 'kill': return 'KIL';
+      default: return 'UNK';
     }
   };
 
@@ -183,14 +183,14 @@ export function AuditPage({
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={() => handleExport('json')}>
-            📥 Export JSON
+            Export JSON
           </button>
           <button className="btn btn-secondary" onClick={() => handleExport('csv')}>
-            📥 Export CSV
+            Export CSV
           </button>
           {onRefresh && (
             <button className="btn btn-primary" onClick={onRefresh}>
-              🔄 Refresh
+              Refresh
             </button>
           )}
         </div>
