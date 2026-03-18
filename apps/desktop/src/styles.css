@@ -2427,12 +2427,41 @@ body {
   height: 34px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 14px;
   padding: 0 14px;
   font-size: 0.77rem;
   color: #9db0ce;
   background: linear-gradient(180deg, #0f1729 0%, #0b1220 100%);
   border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.rt-conn,
+.rt-seq,
+.rt-replay,
+.rt-gap {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+  font-size: 0.72rem;
+  color: #a7bedf;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.rt-conn.ok,
+.rt-gap.ok {
+  border-color: rgba(16, 185, 129, 0.42);
+  color: #82e2c4;
+}
+
+.rt-conn.warn,
+.rt-gap.warn {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #f6ca79;
 }
 
 .sidebar {

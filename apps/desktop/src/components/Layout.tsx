@@ -11,6 +11,10 @@ interface LayoutProps {
   onRefresh?: () => void;
   onStartStack?: () => void;
   onRunDemo?: () => void;
+  realtimeMode?: "live" | "fallback";
+  realtimeSeq?: number;
+  realtimeReplayMs?: number;
+  realtimeGapDetected?: boolean;
 }
 
 export function Layout({
@@ -20,6 +24,10 @@ export function Layout({
   onRefresh,
   onStartStack,
   onRunDemo,
+  realtimeMode = "fallback",
+  realtimeSeq = 0,
+  realtimeReplayMs = 0,
+  realtimeGapDetected = false,
 }: LayoutProps) {
   const { language } = useLanguage();
   const [now, setNow] = useState(() => new Date());
@@ -175,6 +183,14 @@ export function Layout({
 
         <footer className="app-statusbar">
           <span>Active: {currentNavLabel}</span>
+          <span className={`rt-conn ${realtimeMode === "live" ? "ok" : "warn"}`}>
+            RT: {realtimeMode === "live" ? "LIVE" : "FALLBACK"}
+          </span>
+          <span className="rt-seq">Seq: {realtimeSeq}</span>
+          <span className="rt-replay">Replay: {Math.max(0, Math.round(realtimeReplayMs))}ms</span>
+          <span className={`rt-gap ${realtimeGapDetected ? "warn" : "ok"}`}>
+            Gap: {realtimeGapDetected ? "RECOVERED" : "NO"}
+          </span>
           <span>Mode: Desktop Native UX</span>
         </footer>
 

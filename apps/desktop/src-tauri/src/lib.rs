@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -14,7 +14,7 @@ use agentguard_models::{
 use agentguard_store;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -22,6 +22,8 @@ use std::os::unix::fs::PermissionsExt;
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8790";
 const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:8787";
 const STACK_START_TIMEOUT_MS: u64 = 10_000;
+const REALTIME_EVENT_BUFFER_SIZE: usize = 256;
+const REALTIME_TOPIC_SNAPSHOT_BUFFER_SIZE: usize = 256;
 
 #[derive(Clone)]
 struct DesktopState {
@@ -30,6 +32,8 @@ struct DesktopState {
     proxy_url: String,
     runtime_layout: RuntimeLayout,
     runtime: Arc<Mutex<RuntimeSupervisor>>,
+    realtime_events: Arc<Mutex<RealtimeEventBuffer>>,
+    realtime_topics: Arc<Mutex<RealtimeTopicSnapshots>>,
 }
 
 #[derive(Clone)]
@@ -81,6 +85,139 @@ struct RuntimeProcess {
     child: Child,
     _log_path: PathBuf,
     _command: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct RealtimeEvent {
+    seq: u64,
+    topic: String,
+    source: String,
+    timestamp: u64,
+    payload: serde_json::Value,
+}
+
+#[derive(Default)]
+struct RealtimeEventBuffer {
+    next_seq: u64,
+    events: VecDeque<RealtimeEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct RealtimeTopicSnapshot {
+    topic: String,
+    version: u64,
+    seq: u64,
+    timestamp: u64,
+    payload: serde_json::Value,
+}
+
+#[derive(Default)]
+struct RealtimeTopicSnapshots {
+    versions: HashMap<String, u64>,
+    latest: HashMap<String, RealtimeTopicSnapshot>,
+    history: VecDeque<RealtimeTopicSnapshot>,
+}
+
+impl RealtimeTopicSnapshots {
+    fn update(
+        &mut self,
+        topic: &str,
+        seq: u64,
+        timestamp: u64,
+        payload: serde_json::Value,
+    ) -> RealtimeTopicSnapshot {
+        let version = self
+            .versions
+            .get(topic)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.versions.insert(topic.to_string(), version);
+
+        let snapshot = RealtimeTopicSnapshot {
+            topic: topic.to_string(),
+            version,
+            seq,
+            timestamp,
+            payload,
+        };
+        self.latest.insert(topic.to_string(), snapshot.clone());
+        self.history.push_back(snapshot.clone());
+        while self.history.len() > REALTIME_TOPIC_SNAPSHOT_BUFFER_SIZE {
+            let _ = self.history.pop_front();
+        }
+        snapshot
+    }
+
+    fn latest_changed_since(
+        &self,
+        known_versions: &HashMap<String, u64>,
+        limit: usize,
+    ) -> Vec<RealtimeTopicSnapshot> {
+        let mut snapshots: Vec<RealtimeTopicSnapshot> = self
+            .latest
+            .values()
+            .filter(|item| {
+                let known = known_versions.get(&item.topic).copied().unwrap_or(0);
+                item.version > known
+            })
+            .cloned()
+            .collect();
+        snapshots.sort_by_key(|item| item.seq);
+        snapshots.truncate(limit);
+        snapshots
+    }
+
+    fn oldest_seq(&self) -> Option<u64> {
+        self.history.front().map(|item| item.seq)
+    }
+
+    fn latest_seq(&self) -> u64 {
+        self.history.back().map(|item| item.seq).unwrap_or(0)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct RealtimeTopicReplay {
+    watermark_seq: u64,
+    gap_detected: bool,
+    snapshots: Vec<RealtimeTopicSnapshot>,
+}
+
+impl RealtimeEventBuffer {
+    fn push(
+        &mut self,
+        topic: String,
+        source: String,
+        timestamp: u64,
+        payload: serde_json::Value,
+    ) -> RealtimeEvent {
+        self.next_seq = self.next_seq.saturating_add(1);
+        let event = RealtimeEvent {
+            seq: self.next_seq,
+            topic,
+            source,
+            timestamp,
+            payload,
+        };
+        self.events.push_back(event.clone());
+        while self.events.len() > REALTIME_EVENT_BUFFER_SIZE {
+            let _ = self.events.pop_front();
+        }
+        event
+    }
+
+    fn list_since(&self, since_seq: u64, limit: usize) -> Vec<RealtimeEvent> {
+        self.events
+            .iter()
+            .filter(|item| item.seq > since_seq)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -322,6 +459,8 @@ impl DesktopState {
                 .unwrap_or_else(|_| DEFAULT_PROXY_URL.into()),
             runtime_layout: build_runtime_layout(app)?,
             runtime: Arc::new(Mutex::new(RuntimeSupervisor::default())),
+            realtime_events: Arc::new(Mutex::new(RealtimeEventBuffer::default())),
+            realtime_topics: Arc::new(Mutex::new(RealtimeTopicSnapshots::default())),
         })
     }
 }
@@ -387,46 +526,215 @@ struct DashboardMetrics {
 async fn get_dashboard_metrics(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<DashboardMetrics, String> {
+    Ok(get_metrics_internal(&state).await)
+}
+
+#[tauri::command]
+fn get_realtime_events_since(
+    state: tauri::State<'_, DesktopState>,
+    since_seq: Option<u64>,
+    limit: Option<usize>,
+) -> Result<Vec<RealtimeEvent>, String> {
+    let since_seq = since_seq.unwrap_or(0);
+    let limit = limit.unwrap_or(64).clamp(1, 512);
+    let guard = state
+        .realtime_events
+        .lock()
+        .map_err(|_| "failed to lock realtime event buffer".to_string())?;
+    Ok(guard.list_since(since_seq, limit))
+}
+
+#[tauri::command]
+fn get_realtime_topic_snapshots(
+    state: tauri::State<'_, DesktopState>,
+    topic_versions: Option<HashMap<String, u64>>,
+    since_seq: Option<u64>,
+    limit: Option<usize>,
+) -> Result<RealtimeTopicReplay, String> {
+    let known_versions = topic_versions.unwrap_or_default();
+    let since_seq = since_seq.unwrap_or(0);
+    let limit = limit.unwrap_or(16).clamp(1, 64);
+
+    let guard = state
+        .realtime_topics
+        .lock()
+        .map_err(|_| "failed to lock realtime topic snapshots".to_string())?;
+    let oldest_seq = guard.oldest_seq().unwrap_or(0);
+    let watermark_seq = guard.latest_seq();
+    let gap_detected = since_seq > 0 && oldest_seq > since_seq.saturating_add(1);
+    let snapshots = guard.latest_changed_since(&known_versions, limit);
+
+    Ok(RealtimeTopicReplay {
+        watermark_seq,
+        gap_detected,
+        snapshots,
+    })
+}
+
+#[derive(Clone, Serialize)]
+struct DashboardUpdate {
+    agent_count: usize,
+    pending_approval_count: usize,
+    hash: String,
+    source: String,
+    timestamp: u64,
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn push_realtime_event(
+    state: &DesktopState,
+    topic: &str,
+    source: &str,
+    timestamp: u64,
+    payload: serde_json::Value,
+) -> RealtimeEvent {
+    let mut guard = state
+        .realtime_events
+        .lock()
+        .expect("realtime event buffer mutex should not be poisoned");
+    guard.push(topic.to_string(), source.to_string(), timestamp, payload)
+}
+
+fn emit_realtime_event<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &DesktopState,
+    topic: &str,
+    source: &str,
+    payload: serde_json::Value,
+) -> RealtimeEvent {
+    let timestamp = now_unix_secs();
+    let event = push_realtime_event(state, topic, source, timestamp, payload.clone());
+    if let Ok(mut topic_guard) = state.realtime_topics.lock() {
+        let _ = topic_guard.update(topic, event.seq, timestamp, payload);
+    }
+    let _ = app.emit("agentguard-event", event.clone());
+    event
+}
+
+async fn emit_audit_update<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &DesktopState,
+    source: &str,
+) {
+    let latest_record_id = fetch_recent_audit(state, 1)
+        .await
+        .ok()
+        .and_then(|rows| rows.first().map(|row| row.id));
+    let payload = serde_json::json!({
+        "latest_record_id": latest_record_id,
+    });
+    let _ = emit_realtime_event(app, state, "audit", source, payload);
+}
+
+async fn emit_rules_update<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &DesktopState,
+    source: &str,
+) {
+    let rules = fetch_policy_rules(state, 200).await.unwrap_or_default();
+    let payload = serde_json::json!({
+        "rule_count": rules.len(),
+    });
+    let _ = emit_realtime_event(app, state, "rules", source, payload);
+}
+
+async fn emit_processes_update<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &DesktopState,
+    source: &str,
+) {
+    let records = fetch_recent_audit(state, 250).await.unwrap_or_default();
+    let observed: HashSet<u32> = records
+        .iter()
+        .filter_map(|row| row.event.agent.process_id)
+        .collect();
+    let payload = serde_json::json!({
+        "observed_processes": observed.len(),
+        "recent_event_count": records.len(),
+    });
+    let _ = emit_realtime_event(app, state, "processes", source, payload);
+}
+
+async fn emit_dashboard_update<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &DesktopState,
+    source: &str,
+) {
+    let metrics = get_metrics_internal(state).await;
+    let now = now_unix_secs();
+
+    let _ = emit_realtime_event(
+        app,
+        state,
+        "dashboard",
+        source,
+        serde_json::json!({
+            "agent_count": metrics.agent_count,
+            "pending_approval_count": metrics.pending_approval_count,
+            "latest_record_id": metrics.latest_record_id,
+            "total_risk_count": metrics.total_risk_count,
+            "hash": metrics.hash,
+        }),
+    );
+
+    let _ = app.emit(
+        "dashboard-updated",
+        DashboardUpdate {
+            agent_count: metrics.agent_count,
+            pending_approval_count: metrics.pending_approval_count,
+            hash: metrics.hash.clone(),
+            source: source.to_string(),
+            timestamp: now,
+        },
+    );
+}
+
+async fn get_metrics_internal(state: &DesktopState) -> DashboardMetrics {
     // Fetch only essential counts for change detection
-    let records = match fetch_recent_audit(&state, 1).await {
+    let records = match fetch_recent_audit(state, 1).await {
         Ok(records) => records,
         Err(_) => Vec::new(),
     };
-    
-    let pending_approvals = match fetch_pending_approvals(&state, 10).await {
+
+    let pending_approvals = match fetch_pending_approvals(state, 10).await {
         Ok(approvals) => approvals,
         Err(_) => Vec::new(),
     };
-    
+
     let latest_record_id = records.first().map(|r| r.id);
     let counts = if !records.is_empty() {
         summarize_counts(&records)
     } else {
-        summarize_counts(&match fetch_recent_audit(&state, 25).await {
+        summarize_counts(&match fetch_recent_audit(state, 25).await {
             Ok(recs) => recs,
             Err(_) => Vec::new(),
         })
     };
-    
+
     let total_risk_count = counts.high + counts.medium + counts.low;
-    
-    // Simple hash for change detection
-    let hash_input = format!(
-        "{:?}:{:?}:{:?}:{}",
+
+    // Stable digest for change detection.
+    let hash = format!(
+        "a:{}|p:{}|l:{}|r:{}",
+        records.len(),
         pending_approvals.len(),
-        latest_record_id,
-        total_risk_count,
-        records.len()
+        latest_record_id.unwrap_or(-1),
+        total_risk_count
     );
-    let hash = format!("h{}", hash_input.len());
-    
-    Ok(DashboardMetrics {
+
+    DashboardMetrics {
         agent_count: records.len(),
         pending_approval_count: pending_approvals.len(),
         latest_record_id,
         total_risk_count,
         hash,
-    })
+    }
 }
 
 #[tauri::command]
@@ -438,15 +746,21 @@ fn load_runtime_environment(
 
 #[tauri::command]
 async fn submit_sample_event(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     kind: String,
 ) -> Result<AuditRecord, String> {
     let event = sample_event(SampleEventKind::parse(&kind)?);
-    post_event(&state, &event).await
+    let record = post_event(&state, &event).await?;
+    emit_dashboard_update(&app, &state, "submit_sample_event").await;
+    emit_audit_update(&app, &state, "submit_sample_event").await;
+    emit_processes_update(&app, &state, "submit_sample_event").await;
+    Ok(record)
 }
 
 #[tauri::command]
 async fn resolve_approval_request(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     approval_id: i64,
     action: String,
@@ -459,46 +773,70 @@ async fn resolve_approval_request(
         reason,
     };
 
-    post_approval_resolution(&state, approval_id, &resolution).await
+    let updated = post_approval_resolution(&state, approval_id, &resolution).await?;
+    emit_dashboard_update(&app, &state, "resolve_approval_request").await;
+    emit_audit_update(&app, &state, "resolve_approval_request").await;
+    Ok(updated)
 }
 
 #[tauri::command]
 async fn save_policy_rule(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     rule: Rule,
 ) -> Result<ManagedRule, String> {
-    post_policy_rule(&state, &rule).await
+    let saved = post_policy_rule(&state, &rule).await?;
+    emit_dashboard_update(&app, &state, "save_policy_rule").await;
+    emit_rules_update(&app, &state, "save_policy_rule").await;
+    Ok(saved)
 }
 
 #[tauri::command]
 async fn set_policy_rule_enabled(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     rule_id: String,
     enabled: bool,
 ) -> Result<ManagedRule, String> {
-    post_policy_rule_enabled(&state, &rule_id, enabled).await
+    let updated = post_policy_rule_enabled(&state, &rule_id, enabled).await?;
+    emit_dashboard_update(&app, &state, "set_policy_rule_enabled").await;
+    emit_rules_update(&app, &state, "set_policy_rule_enabled").await;
+    Ok(updated)
 }
 
 #[tauri::command]
 async fn delete_policy_rule(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     rule_id: String,
 ) -> Result<(), String> {
-    delete_policy_rule_request(&state, &rule_id).await
+    delete_policy_rule_request(&state, &rule_id).await?;
+    emit_dashboard_update(&app, &state, "delete_policy_rule").await;
+    emit_rules_update(&app, &state, "delete_policy_rule").await;
+    Ok(())
 }
 
 #[tauri::command]
 async fn start_local_stack(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<RuntimeStartResult, String> {
-    start_runtime_stack(&state).await
+    let result = start_runtime_stack(&state).await?;
+    emit_dashboard_update(&app, &state, "start_local_stack").await;
+    emit_processes_update(&app, &state, "start_local_stack").await;
+    Ok(result)
 }
 
 #[tauri::command]
 async fn run_real_agent_demo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<DemoRunResult, String> {
-    run_live_demo(&state).await
+    let result = run_live_demo(&state).await?;
+    emit_dashboard_update(&app, &state, "run_real_agent_demo").await;
+    emit_audit_update(&app, &state, "run_real_agent_demo").await;
+    emit_processes_update(&app, &state, "run_real_agent_demo").await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -517,6 +855,7 @@ async fn export_policy_rules(
 
 #[tauri::command]
 async fn import_policy_rules(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     export_data: RuleExport,
 ) -> Result<Vec<ManagedRule>, String> {
@@ -531,6 +870,8 @@ async fn import_policy_rules(
         }
     }
 
+    emit_dashboard_update(&app, &state, "import_policy_rules").await;
+    emit_rules_update(&app, &state, "import_policy_rules").await;
     Ok(imported_rules)
 }
 
@@ -704,6 +1045,7 @@ async fn query_audit_reviews(
 
 #[tauri::command]
 async fn update_audit_review(
+    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     audit_record_id: i64,
     review: AuditReviewUpdate,
@@ -721,10 +1063,13 @@ async fn update_audit_review(
         return Err(format!("failed to update audit review: {}", response.status()));
     }
 
-    response
+    let updated = response
         .json::<AuditReview>()
         .await
-        .map_err(|error| format!("failed to decode audit review: {error}"))
+        .map_err(|error| format!("failed to decode audit review: {error}"))?;
+
+    emit_audit_update(&app, &state, "update_audit_review").await;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -2303,11 +2648,14 @@ pub fn run() {
         .setup(|app| {
             let state = DesktopState::new(&app.handle()).map_err(std::io::Error::other)?;
             app.manage(state);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             load_dashboard_snapshot,
             get_dashboard_metrics,
+            get_realtime_events_since,
+            get_realtime_topic_snapshots,
             load_runtime_environment,
             submit_sample_event,
             resolve_approval_request,

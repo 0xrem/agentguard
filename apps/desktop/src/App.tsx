@@ -1,10 +1,11 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   deletePolicyRule,
   detectRuleConflicts,
   exportRules,
   getAuditStats,
-  getDashboardMetrics,
+  getRealtimeTopicSnapshots,
   importRules,
   loadDashboard,
   loadProcesses,
@@ -17,8 +18,10 @@ import {
   setPolicyRuleEnabled,
   startLocalStack,
   submitSampleEvent,
+  type RealtimeEvent,
+  type RealtimeTopicSnapshot,
+  type RealtimeTopic,
   updateAuditReview,
-  type DashboardMetrics,
 } from "./api";
 import { mockLoadProcesses } from "./mock";
 import { Layout } from "./components/Layout";
@@ -258,34 +261,79 @@ export default function App() {
   const [auditStats, setAuditStats] = useState<AuditStats | null>(null);
   const [ruleConflicts, setRuleConflicts] = useState<RuleConflict[]>([]);
   const [lastRefreshTime, setLastRefreshTime] = useState<number>(Date.now());
-  
-  // Smart polling: track last metrics to detect changes
-  const lastMetricsRef = useRef<DashboardMetrics | null>(null);
+  const [realtimeMode, setRealtimeMode] = useState<"live" | "fallback">("fallback");
+  const [realtimeSeq, setRealtimeSeq] = useState(0);
+  const [realtimeReplayMs, setRealtimeReplayMs] = useState(0);
+  const [realtimeGapDetected, setRealtimeGapDetected] = useState(false);
+  const unlistenEventRef = useRef<(() => void) | null>(null);
+  const fallbackTimerRef = useRef<number | null>(null);
+  const lastEventSeqRef = useRef(0);
+  const replayInFlightRef = useRef(false);
+  const replayRequestedRef = useRef(false);
+  const pendingTopicsRef = useRef<Set<RealtimeTopic>>(new Set());
+  const topicFlushTimerRef = useRef<number | null>(null);
+  const topicVersionsRef = useRef<Partial<Record<RealtimeTopic, number>>>({});
 
   useEffect(() => {
     void refreshDashboard(true);
 
-    const timer = window.setInterval(() => {
-      // Smart polling: first check metrics to detect changes
-      void (async () => {
-        try {
-          const metrics = await getDashboardMetrics();
-          const lastMetrics = lastMetricsRef.current;
-          
-          // Only refresh full dashboard if metrics changed or it's first check
-          if (!lastMetrics || metrics.hash !== lastMetrics.hash) {
-            lastMetricsRef.current = metrics;
-            await refreshDashboard(false);
+    // Set up unified realtime event stream with replay support.
+    void (async () => {
+      try {
+        const unlisten = await listen<RealtimeEvent>("agentguard-event", (event) => {
+          if (event.payload?.timestamp) {
+            setLastRefreshTime(event.payload.timestamp * 1000);
           }
-        } catch (e) {
-          console.error("[Smart polling] Error:", e);
-          // Fallback: do full refresh on error
-          await refreshDashboard(false);
-        }
-      })();
-    }, 2000);
 
-    return () => window.clearInterval(timer);
+          const incoming = event.payload;
+          if (!incoming) {
+            return;
+          }
+
+          const previousSeq = lastEventSeqRef.current;
+          if (incoming.seq > previousSeq + 1 && previousSeq > 0) {
+            setRealtimeGapDetected(true);
+            requestRealtimeSync();
+          }
+
+          if (incoming.seq > previousSeq) {
+            lastEventSeqRef.current = incoming.seq;
+            setRealtimeSeq(incoming.seq);
+          }
+
+          scheduleTopicRefresh(incoming.topic);
+        });
+        unlistenEventRef.current = unlisten;
+        setRealtimeMode("live");
+
+        // Catch any events produced before the listener was attached.
+        requestRealtimeSync();
+      } catch (e) {
+        console.error("[Realtime events] Failed to subscribe:", e);
+        setRealtimeMode("fallback");
+        // Fallback only when push channel is unavailable.
+        fallbackTimerRef.current = window.setInterval(() => {
+          void refreshDashboard(false);
+        }, 5000);
+      }
+    })();
+
+    return () => {
+      // Clean up event listener
+      if (unlistenEventRef.current) {
+        unlistenEventRef.current();
+        unlistenEventRef.current = null;
+      }
+      // Clean up fallback timer if it was created
+      if (fallbackTimerRef.current) {
+        window.clearInterval(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+      if (topicFlushTimerRef.current !== null) {
+        window.clearTimeout(topicFlushTimerRef.current);
+        topicFlushTimerRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -383,13 +431,185 @@ export default function App() {
     }
   }
 
+  async function refreshDashboardModule() {
+    try {
+      const [nextSnapshot, nextRuntimeEnvironment] = await Promise.all([
+        loadDashboard(30),
+        loadRuntimeEnvironment(),
+      ]);
+      setError(null);
+      startTransition(() => {
+        setSnapshot(nextSnapshot);
+        setRuntimeEnvironment(nextRuntimeEnvironment);
+        setLastRefreshTime(Date.now());
+      });
+    } catch (moduleError) {
+      setError(getErrorMessage(moduleError));
+    }
+  }
+
+  async function refreshAuditModule() {
+    try {
+      const nextStats = await getAuditStats(Date.now() - 86_400_000).catch(() => null);
+      if (nextStats) {
+        setAuditStats(nextStats);
+      }
+      if (currentPage === "audit") {
+        await refreshAuditLogs();
+      }
+      setError(null);
+      setLastRefreshTime(Date.now());
+    } catch (moduleError) {
+      setError(getErrorMessage(moduleError));
+    }
+  }
+
+  async function refreshRulesModule() {
+    try {
+      const [nextSnapshot, conflicts] = await Promise.all([
+        loadDashboard(30),
+        detectRuleConflicts().catch(() => null),
+      ]);
+      startTransition(() => {
+        setSnapshot((prev) =>
+          prev
+            ? {
+                ...prev,
+                remembered_rules: nextSnapshot.remembered_rules,
+              }
+            : nextSnapshot,
+        );
+        setLastRefreshTime(Date.now());
+      });
+      if (conflicts) {
+        setRuleConflicts(conflicts);
+      }
+      setError(null);
+    } catch (moduleError) {
+      setError(getErrorMessage(moduleError));
+    }
+  }
+
+  async function refreshProcessesModule() {
+    try {
+      const next = await fetchProcessFeed(processDataMode, syntheticAgentCount);
+      setProcesses(smoothRuntimeProcesses(next, processNetworkCacheRef.current));
+      setError(null);
+      setLastRefreshTime(Date.now());
+    } catch (moduleError) {
+      setError(getErrorMessage(moduleError));
+    }
+  }
+
+  async function refreshTopic(topic: RealtimeTopic) {
+    switch (topic) {
+      case "dashboard":
+        await refreshDashboardModule();
+        return;
+      case "audit":
+        await refreshAuditModule();
+        return;
+      case "rules":
+        await refreshRulesModule();
+        return;
+      case "processes":
+        await refreshProcessesModule();
+        return;
+      default:
+        return;
+    }
+  }
+
+  function scheduleTopicRefresh(topic: RealtimeTopic) {
+    pendingTopicsRef.current.add(topic);
+    if (topicFlushTimerRef.current !== null) {
+      return;
+    }
+
+    topicFlushTimerRef.current = window.setTimeout(() => {
+      topicFlushTimerRef.current = null;
+      const topics = Array.from(pendingTopicsRef.current);
+      pendingTopicsRef.current.clear();
+
+      void (async () => {
+        for (const item of topics) {
+          await refreshTopic(item);
+        }
+      })();
+    }, 80);
+  }
+
+  function requestRealtimeSync() {
+    if (replayInFlightRef.current) {
+      replayRequestedRef.current = true;
+      return;
+    }
+
+    void (async () => {
+      replayInFlightRef.current = true;
+      try {
+        const replayStart = performance.now();
+        do {
+          replayRequestedRef.current = false;
+          const replay = await getRealtimeTopicSnapshots(
+            topicVersionsRef.current,
+            lastEventSeqRef.current,
+            16,
+          );
+
+          if (replay.watermark_seq > lastEventSeqRef.current) {
+            lastEventSeqRef.current = replay.watermark_seq;
+            setRealtimeSeq(replay.watermark_seq);
+          }
+          if (replay.gap_detected) {
+            setRealtimeGapDetected(true);
+          }
+
+          if (replay.snapshots.length === 0) {
+            break;
+          }
+
+          applyTopicSnapshots(replay.snapshots);
+
+          if (replay.snapshots.length >= 16) {
+            replayRequestedRef.current = true;
+          }
+        } while (replayRequestedRef.current);
+        setRealtimeReplayMs(performance.now() - replayStart);
+      } catch (syncError) {
+        console.error("[Realtime events] Sync failed:", syncError);
+        void refreshDashboard(false);
+      } finally {
+        replayInFlightRef.current = false;
+      }
+    })();
+  }
+
+  function applyTopicSnapshots(snapshots: RealtimeTopicSnapshot[]) {
+    for (const snapshot of snapshots) {
+      const knownVersion = topicVersionsRef.current[snapshot.topic] ?? 0;
+      if (snapshot.version > knownVersion) {
+        topicVersionsRef.current[snapshot.topic] = snapshot.version;
+        scheduleTopicRefresh(snapshot.topic);
+      }
+      if (snapshot.seq > lastEventSeqRef.current) {
+        lastEventSeqRef.current = snapshot.seq;
+        setRealtimeSeq(snapshot.seq);
+      }
+    }
+  }
+
   async function handleScenarioSubmit() {
     setSubmitting(true);
     try {
       const record = await submitSampleEvent(selectedScenario);
       setLastRecord(record);
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([
+        refreshDashboardModule(),
+        refreshAuditModule(),
+        refreshProcessesModule(),
+      ]);
     } catch (submitError) {
       setError(getErrorMessage(submitError));
     } finally {
@@ -612,7 +832,7 @@ export default function App() {
         }
       }
 
-      await refreshDashboard(false);
+      await Promise.all([refreshDashboardModule(), refreshAuditModule()]);
       setError(nextError);
     } catch (resolveError) {
       setError(getErrorMessage(resolveError));
@@ -624,8 +844,7 @@ export default function App() {
   async function handleQuickResolveApproval(approvalId: number, action: "allow" | "block") {
     try {
       await resolveApprovalRequest(approvalId, action, "Quick resolve from control room");
-      // Immediate refresh for snappy feedback
-      await refreshDashboard(false);
+      await Promise.all([refreshDashboardModule(), refreshAuditModule()]);
     } catch (resolveError) {
       setError(getErrorMessage(resolveError));
     }
@@ -645,8 +864,7 @@ export default function App() {
         "block",
         "Dismissed by user",
       );
-      // Immediate refresh to reflect dismissal
-      await refreshDashboard(false);
+      await Promise.all([refreshDashboardModule(), refreshAuditModule()]);
     } catch (dismissError) {
       setError(getErrorMessage(dismissError));
     } finally {
@@ -680,7 +898,7 @@ export default function App() {
       if (!silent) {
         setError(null);
       }
-      await refreshDashboard(false);
+      await Promise.all([refreshDashboardModule(), refreshProcessesModule()]);
       return result;
     } catch (stackError) {
       if (!silent) {
@@ -749,7 +967,11 @@ export default function App() {
 
       setDemoResult(result);
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([
+        refreshDashboardModule(),
+        refreshAuditModule(),
+        refreshProcessesModule(),
+      ]);
     } catch (demoError) {
       setError(classifyRuntimeError(getErrorMessage(demoError), "demo"));
     } finally {
@@ -769,7 +991,7 @@ export default function App() {
       setRuleDraft(null);
       setShowRuleEditorModal(false);
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([refreshRulesModule(), refreshDashboardModule()]);
     } catch (ruleError) {
       setError(getErrorMessage(ruleError));
     } finally {
@@ -782,7 +1004,7 @@ export default function App() {
     try {
       await setPolicyRuleEnabled(ruleId, enabled);
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([refreshRulesModule(), refreshDashboardModule()]);
     } catch (ruleError) {
       setError(getErrorMessage(ruleError));
     } finally {
@@ -799,7 +1021,7 @@ export default function App() {
         setRuleDraft(null);
       }
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([refreshRulesModule(), refreshDashboardModule()]);
     } catch (ruleError) {
       setError(getErrorMessage(ruleError));
     } finally {
@@ -843,7 +1065,7 @@ export default function App() {
       }
       await importRules(exportData);
       setError(null);
-      await refreshDashboard(false);
+      await Promise.all([refreshRulesModule(), refreshDashboardModule()]);
     } catch (importError) {
       setError(getErrorMessage(importError));
     } finally {
@@ -1199,6 +1421,10 @@ export default function App() {
       onRefresh={() => void refreshDashboard(false)}
       onStartStack={() => void handleStartLocalStack()}
       onRunDemo={() => void handleRunRealDemo()}
+      realtimeMode={realtimeMode}
+      realtimeSeq={realtimeSeq}
+      realtimeReplayMs={realtimeReplayMs}
+      realtimeGapDetected={realtimeGapDetected}
     >
       {currentPage === 'dashboard' && (
         <Dashboard

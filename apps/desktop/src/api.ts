@@ -53,6 +53,30 @@ export interface DashboardMetrics {
   hash: string; // Used for change detection
 }
 
+export type RealtimeTopic = "dashboard" | "audit" | "rules" | "processes";
+
+export interface RealtimeEvent {
+  seq: number;
+  topic: RealtimeTopic;
+  source: string;
+  timestamp: number;
+  payload: Record<string, unknown>;
+}
+
+export interface RealtimeTopicSnapshot {
+  topic: RealtimeTopic;
+  version: number;
+  seq: number;
+  timestamp: number;
+  payload: Record<string, unknown>;
+}
+
+export interface RealtimeTopicReplay {
+  watermark_seq: number;
+  gap_detected: boolean;
+  snapshots: RealtimeTopicSnapshot[];
+}
+
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   if (!isTauriRuntime()) {
     // Generate metrics from mock dashboard
@@ -74,6 +98,40 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   return invoke<DashboardMetrics>("get_dashboard_metrics");
+}
+
+export async function getRealtimeEventsSince(
+  sinceSeq?: number,
+  limit = 64,
+): Promise<RealtimeEvent[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+
+  return invoke<RealtimeEvent[]>("get_realtime_events_since", {
+    sinceSeq: sinceSeq ?? null,
+    limit,
+  });
+}
+
+export async function getRealtimeTopicSnapshots(
+  topicVersions: Partial<Record<RealtimeTopic, number>>,
+  sinceSeq?: number,
+  limit = 16,
+): Promise<RealtimeTopicReplay> {
+  if (!isTauriRuntime()) {
+    return {
+      watermark_seq: sinceSeq ?? 0,
+      gap_detected: false,
+      snapshots: [],
+    };
+  }
+
+  return invoke<RealtimeTopicReplay>("get_realtime_topic_snapshots", {
+    topicVersions,
+    sinceSeq: sinceSeq ?? null,
+    limit,
+  });
 }
 
 export async function loadRuntimeEnvironment(): Promise<RuntimeEnvironment> {
